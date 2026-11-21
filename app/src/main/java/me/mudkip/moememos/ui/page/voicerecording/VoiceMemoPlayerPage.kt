@@ -5,6 +5,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -33,6 +34,7 @@ import me.mudkip.moememos.ui.component.ActionIconButton
 import kotlin.math.abs
 import kotlin.random.Random
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VoiceMemoPlayerPage(
     audioUri: String,
@@ -269,9 +271,62 @@ private fun VoiceMemoPlayerCard(
         Spacer(modifier = Modifier.height(16.dp))
 
         // Tab switcher
-        TabSwitcher(selectedTab = selectedTab, onTabChanged = onTabChanged)
+        TabSwitcherPlayer(selectedTab = selectedTab, onTabChanged = { selectedTab = it })
     }
 }
+
+@Composable
+private fun TabSwitcherPlayer(
+    selectedTab: Int,
+    onTabChanged: (Int) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        TabButtonPlayer(
+            modifier = Modifier.weight(1f),
+            isSelected = selectedTab == 0,
+            onClick = { onTabChanged(0) },
+            label = "〰️"
+        )
+        TabButtonPlayer(
+            modifier = Modifier.weight(1f),
+            isSelected = selectedTab == 1,
+            onClick = { onTabChanged(1) },
+            label = "📝"
+        )
+    }
+}
+
+@Composable
+private fun TabButtonPlayer(
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        modifier = modifier
+            .height(36.dp)
+            .fillMaxWidth(),
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (isSelected)
+                MaterialTheme.colorScheme.primary
+            else
+                Color.Transparent,
+            contentColor = if (isSelected)
+                MaterialTheme.colorScheme.onPrimary
+            else
+                MaterialTheme.colorScheme.onSurfaceVariant
+        ),
+        shape = RoundedCornerShape(6.dp)
+    ) {
+        Text(label, fontSize = 16.sp)
+    }
 
 @Composable
 private fun PlayerWaveform(

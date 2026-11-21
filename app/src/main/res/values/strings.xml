@@ -150,15 +150,15 @@
     <string name="pause">Pause</string>
     <string name="resume">Resume</string>
     <string name="stop">Stop</string>
-    <string name="recording_time">%02d:%02d,%d</string>
+    <string name="recording_time" formatted="false">%02d:%02d,%d</string>
     <string name="speech">Speech</string>
     <string name="waveform">Waveform</string>
     <string name="transcription">Transcription</string>
     <string name="play">Play</string>
     <string name="rewind_5">-5s</string>
     <string name="forward_10">+10s</string>
-    <string name="remaining_time">-%02d:%02d</string>
-    <string name="current_time">%02d:%02d</string>
+    <string name="remaining_time" formatted="false">-%02d:%02d</string>
+    <string name="current_time" formatted="false">%02d:%02d</string>
     <string name="audio_permission_required">Audio permission is required to record voice memos</string>
     <string name="recording_failed">Failed to record audio</string>
     <string name="transcription_failed">Failed to transcribe audio</string>

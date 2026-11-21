@@ -92,7 +92,7 @@ class VoiceRecordingViewModel @Inject constructor(
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
                 setAudioSamplingRate(16000)
-                setAudioBitRate(128000)
+                setAudioEncodingBitRate(128000)
                 setOutputFile(audioFile?.absolutePath)
                 prepare()
                 start()
@@ -219,7 +219,7 @@ class VoiceRecordingViewModel @Inject constructor(
     ): String {
         return try {
             val audioBytes = audioFile.readBytes()
-            val base64Audio = Base64.getEncoder().encodeToString(audioBytes)
+            val base64Audio = Base64.getEncoder().encodeToString(audioBytes)!!
 
             val requestBody = buildJsonObject {
                 put("audio_content", base64Audio)

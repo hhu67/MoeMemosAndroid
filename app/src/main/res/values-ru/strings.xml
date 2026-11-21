@@ -99,15 +99,15 @@
     <string name="pause">Пауза</string>
     <string name="resume">Продолжить</string>
     <string name="stop">Стоп</string>
-    <string name="recording_time">%02d:%02d,%d</string>
+    <string name="recording_time" formatted="false">%02d:%02d,%d</string>
     <string name="speech">Речь</string>
     <string name="waveform">Волна</string>
     <string name="transcription">Расшифровка</string>
     <string name="play">Воспроизведение</string>
     <string name="rewind_5">-5s</string>
     <string name="forward_10">+10s</string>
-    <string name="remaining_time">-%02d:%02d</string>
-    <string name="current_time">%02d:%02d</string>
+    <string name="remaining_time" formatted="false">-%02d:%02d</string>
+    <string name="current_time" formatted="false">%02d:%02d</string>
     <string name="audio_permission_required">Требуется разрешение на запись аудио для записи голосовых заметок</string>
     <string name="recording_failed">Не удалось записать аудио</string>
     <string name="transcription_failed">Не удалось расшифровать аудио</string>

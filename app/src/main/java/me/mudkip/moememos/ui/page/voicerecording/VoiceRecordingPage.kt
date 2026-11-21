@@ -299,12 +299,13 @@ private fun TabSwitcher(selectedTab: Int, onTabChanged: (Int) -> Unit) {
 private fun TabButton(
     isSelected: Boolean,
     onClick: () -> Unit,
-    label: String
+    label: String,
+    modifier: Modifier = Modifier
 ) {
     Button(
-        modifier = Modifier
-            .weight(1f)
-            .height(36.dp),
+        modifier = modifier
+            .height(36.dp)
+            .fillMaxWidth(),
         onClick = onClick,
         colors = ButtonDefaults.buttonColors(
             containerColor = if (isSelected)
