@@ -26,12 +26,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.navigation.NavHostController
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.padding
+import android.Manifest
+import android.content.pm.PackageManager
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import me.mudkip.moememos.R
@@ -76,6 +82,14 @@ private fun MemosHomePageContent(
         }
     }
     var syncAlert by remember { mutableStateOf<HomeSyncAlert?>(null) }
+    val context = LocalContext.current
+    val audioPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            rootNavController.navigate(RouteName.VOICE_RECORDING)
+        } else {
+            Toast.makeText(context, R.string.audio_permission_required.string, Toast.LENGTH_LONG).show()
+        }
+    }
 
     suspend fun requestManualSync(allowHigherV1Version: String? = null) {
         when (val result = memosViewModel.refreshMemos(allowHigherV1Version)) {
@@ -126,30 +140,35 @@ private fun MemosHomePageContent(
         },
 
         floatingActionButton = {
-            Box(contentAlignment = Alignment.BottomEnd) {
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    modifier = Modifier.padding(end = 16.dp)
-                ) {
-                    FloatingActionButton(
-                        onClick = {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FloatingActionButton(
+                    onClick = {
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
                             rootNavController.navigate(RouteName.VOICE_RECORDING)
-                        },
-                        containerColor = Color(0xFFFF6B6B),
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    ) {
-                        Icon(Icons.Filled.Mic, contentDescription = R.string.start_voice_recording.string)
-                    }
-
-                    ExtendedFloatingActionButton(
-                        onClick = {
-                            rootNavController.navigate(RouteName.INPUT)
-                        },
-                        expanded = expandedFab,
-                        text = { Text(R.string.new_memo.string) },
-                        icon = { Icon(Icons.Filled.Add, contentDescription = R.string.compose.string) }
-                    )
+                        } else {
+                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                    shape = CircleShape,
+                    containerColor = VoiceRecordRed,
+                    contentColor = Color.White
+                ) {
+                    Icon(Icons.Filled.Mic, contentDescription = R.string.start_voice_recording.string)
                 }
+
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        rootNavController.navigate(RouteName.INPUT)
+                    },
+                    expanded = expandedFab,
+                    text = { Text(R.string.new_memo.string) },
+                    icon = { Icon(Icons.Filled.Add, contentDescription = R.string.compose.string) }
+                )
             }
         },
 
@@ -224,6 +243,7 @@ private fun MemosHomePageContent(
 }
 
 private val MemoListFabAvoidancePadding = 96.dp
+private val VoiceRecordRed = Color(0xFFD93025)
 
 private sealed class HomeSyncAlert {
     data class Blocked(val message: String) : HomeSyncAlert()

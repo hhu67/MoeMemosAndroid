@@ -6,334 +6,300 @@ import android.net.Uri
 import android.os.Build
 import android.util.Base64
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.skydoves.sandwich.ApiResponse
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
+import me.mudkip.moememos.R
+import me.mudkip.moememos.data.model.Account
 import me.mudkip.moememos.data.model.MemoVisibility
 import me.mudkip.moememos.data.service.AccountService
 import me.mudkip.moememos.data.service.MemoService
+import me.mudkip.moememos.ext.getErrorMessage
+import me.mudkip.moememos.ext.string
+import me.mudkip.moememos.util.LiveTranscriber
+import me.mudkip.moememos.util.VoiceMemoFormat
+import me.mudkip.moememos.util.normalizeAmplitude
+import me.mudkip.moememos.widget.WidgetUpdater
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import timber.log.Timber
 import java.io.File
-import java.util.UUID
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
-data class VoiceRecordingState(
-    val isRecording: Boolean = false,
-    val isPaused: Boolean = false,
-    val elapsedTimeMs: Long = 0,
-    val transcription: String = "",
-    val isTranscribing: Boolean = false,
-    val errorMessage: String? = null
-)
+enum class RecorderPhase { IDLE, RECORDING, PAUSED, SAVING, DONE }
+
+/** Server transcription is limited to 25 MiB of audio. */
+private const val MAX_TRANSCRIBE_BYTES = 25L * 1024 * 1024
 
 @HiltViewModel
 class VoiceRecordingViewModel @Inject constructor(
-    @ApplicationContext private val appContext: Context,
+    @param:ApplicationContext private val appContext: Context,
     private val memoService: MemoService,
-    private val accountService: AccountService
+    private val accountService: AccountService,
 ) : ViewModel() {
 
-    private var mediaRecorder: MediaRecorder? = null
-    private var audioFile: File? = null
-    private var recordingStartTime: Long = 0
-    private var pausedTime: Long = 0
-
-    var recordingState by mutableStateOf(VoiceRecordingState())
+    var phase by mutableStateOf(RecorderPhase.IDLE)
+        private set
+    var elapsedMs by mutableStateOf(0L)
+        private set
+    var savingMessage by mutableStateOf<String?>(null)
+        private set
+    var errorMessage by mutableStateOf<String?>(null)
+        private set
+    var savedMemoId by mutableStateOf<String?>(null)
         private set
 
-    private val _audioUri = MutableStateFlow<Uri?>(null)
-    val audioUri: StateFlow<Uri?> = _audioUri
+    /** One loudness value (0..1) every [SAMPLE_INTERVAL_MS], oldest first. */
+    val amplitudes = mutableStateListOf<Float>()
 
-    private val _transcribedText = MutableStateFlow("")
-    val transcribedText: StateFlow<String> = _transcribedText
+    val startedAt: Instant = Instant.now()
 
-    private val _isSaving = MutableStateFlow(false)
-    val isSaving: StateFlow<Boolean> = _isSaving
+    private val transcriber = LiveTranscriber(appContext)
+    val liveTranscript: String get() = transcriber.text
+    val transcriberAvailable: Boolean get() = transcriber.isAvailable
 
-    init {
-        startTimerUpdates()
-    }
+    private var recorder: MediaRecorder? = null
+    private var audioFile: File? = null
+    private var tickerJob: Job? = null
+    private var accumulatedMs = 0L
+    private var segmentStart = 0L
 
-    private fun startTimerUpdates() {
-        viewModelScope.launch {
-            while (true) {
-                if (recordingState.isRecording && !recordingState.isPaused) {
-                    val elapsedMs = System.currentTimeMillis() - recordingStartTime + pausedTime
-                    recordingState = recordingState.copy(elapsedTimeMs = elapsedMs)
-                }
-                delay(100)
-            }
-        }
-    }
-
-    fun startRecording() {
+    fun start() {
+        if (phase != RecorderPhase.IDLE) return
         try {
-            audioFile = File(appContext.cacheDir, "recording_${UUID.randomUUID()}.m4a")
-
-            mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                MediaRecorder(appContext)
-            } else {
-                @Suppress("DEPRECATION")
-                MediaRecorder()
-            }.apply {
+            val stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+                .format(startedAt.atZone(ZoneId.systemDefault()))
+            val dir = File(appContext.cacheDir, "voice").also { it.mkdirs() }
+            val file = File(dir, "voice-note-$stamp.m4a")
+            audioFile = file
+            recorder = createRecorder().apply {
                 setAudioSource(MediaRecorder.AudioSource.MIC)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioSamplingRate(16000)
-                setAudioEncodingBitRate(128000)
-                setOutputFile(audioFile?.absolutePath)
+                setAudioChannels(1)
+                setAudioSamplingRate(44_100)
+                setAudioEncodingBitRate(96_000)
+                setOutputFile(file.absolutePath)
                 prepare()
                 start()
             }
-
-            recordingStartTime = System.currentTimeMillis()
-            pausedTime = 0
-            recordingState = recordingState.copy(
-                isRecording = true,
-                isPaused = false,
-                elapsedTimeMs = 0,
-                errorMessage = null
-            )
+            segmentStart = System.currentTimeMillis()
+            phase = RecorderPhase.RECORDING
+            transcriber.start()
+            startTicker()
         } catch (e: Exception) {
-            recordingState = recordingState.copy(
-                errorMessage = "Failed to start recording: ${e.message}"
-            )
+            Timber.e(e)
+            releaseRecorder()
+            errorMessage = R.string.recording_failed.string
         }
     }
 
-    fun pauseRecording() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                mediaRecorder?.pause()
-            }
-            pausedTime += System.currentTimeMillis() - recordingStartTime
-            recordingState = recordingState.copy(isPaused = true)
-        } catch (e: Exception) {
-            recordingState = recordingState.copy(
-                errorMessage = "Failed to pause recording: ${e.message}"
-            )
-        }
+    fun pause() {
+        if (phase != RecorderPhase.RECORDING) return
+        runCatching { recorder?.pause() }.onFailure { Timber.e(it) }
+        accumulatedMs += System.currentTimeMillis() - segmentStart
+        elapsedMs = accumulatedMs
+        phase = RecorderPhase.PAUSED
+        transcriber.pause()
     }
 
-    fun resumeRecording() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                mediaRecorder?.resume()
-            }
-            recordingStartTime = System.currentTimeMillis()
-            recordingState = recordingState.copy(isPaused = false)
-        } catch (e: Exception) {
-            recordingState = recordingState.copy(
-                errorMessage = "Failed to resume recording: ${e.message}"
-            )
-        }
+    fun resume() {
+        if (phase != RecorderPhase.PAUSED) return
+        runCatching { recorder?.resume() }.onFailure { Timber.e(it) }
+        segmentStart = System.currentTimeMillis()
+        phase = RecorderPhase.RECORDING
+        transcriber.resume()
     }
 
-    fun stopRecording() {
-        try {
-            mediaRecorder?.stop()
-            mediaRecorder?.release()
-            mediaRecorder = null
-
-            audioFile?.let { file ->
-                _audioUri.value = Uri.fromFile(file)
-            }
-
-            recordingState = recordingState.copy(
-                isRecording = false,
-                isPaused = false
-            )
-
-            transcribeWithMemosAI()
-        } catch (e: Exception) {
-            recordingState = recordingState.copy(
-                errorMessage = "Failed to stop recording: ${e.message}"
-            )
-        }
+    /** Throws the recording away. */
+    fun discard() {
+        tickerJob?.cancel()
+        transcriber.stop()
+        releaseRecorder()
+        audioFile?.delete()
+        audioFile = null
+        phase = RecorderPhase.DONE
     }
 
-    private fun transcribeWithMemosAI() {
+    /**
+     * Stops the recording and saves it: the audio becomes an attachment of a new memo and the
+     * transcript becomes the memo text. The memo is saved even when transcription fails.
+     */
+    fun stopAndSave() {
+        if (phase != RecorderPhase.RECORDING && phase != RecorderPhase.PAUSED) return
+        if (phase == RecorderPhase.RECORDING) {
+            accumulatedMs += System.currentTimeMillis() - segmentStart
+        }
+        elapsedMs = accumulatedMs
+        tickerJob?.cancel()
+        phase = RecorderPhase.SAVING
+        val stopped = runCatching { recorder?.stop() }.isSuccess
+        releaseRecorder()
+        transcriber.stop()
+        val file = audioFile
+        if (!stopped || file == null || !file.exists() || file.length() == 0L) {
+            file?.delete()
+            errorMessage = R.string.recording_failed.string
+            phase = RecorderPhase.DONE
+            return
+        }
+
         viewModelScope.launch {
-            try {
-                recordingState = recordingState.copy(isTranscribing = true)
-
-                audioFile?.let { file ->
-                    val account = accountService.currentAccount.first()
-
-                    if (account != null) {
-                        val transcribedText = when (account) {
-                            is me.mudkip.moememos.data.model.Account.MemosV1 -> {
-                                transcribeWithMemosAPI(
-                                    account.info.host,
-                                    account.info.accessToken,
-                                    file,
-                                    v0 = false
-                                )
-                            }
-                            is me.mudkip.moememos.data.model.Account.MemosV0 -> {
-                                transcribeWithMemosAPI(
-                                    account.info.host,
-                                    account.info.accessToken,
-                                    file,
-                                    v0 = true
-                                )
-                            }
-                            else -> {
-                                "Transcription unavailable for local account"
-                            }
-                        }
-                        _transcribedText.value = transcribedText
-                    } else {
-                        _transcribedText.value = "No account selected"
-                    }
-                }
-
-                recordingState = recordingState.copy(isTranscribing = false)
-            } catch (e: Exception) {
-                recordingState = recordingState.copy(
-                    isTranscribing = false,
-                    errorMessage = "Transcription failed: ${e.message}"
-                )
-                _transcribedText.value = "Transcription failed"
-            }
-        }
-    }
-
-    private suspend fun transcribeWithMemosAPI(
-        host: String,
-        accessToken: String?,
-        audioFile: File,
-        v0: Boolean
-    ): String {
-        return try {
-            val audioBytes = audioFile.readBytes()
-            val base64Audio = Base64.encodeToString(audioBytes, Base64.NO_WRAP)
-
-            val requestBody = buildJsonObject {
-                put("audio_content", base64Audio)
-                put("filename", audioFile.name)
-                put("content_type", "audio/mp4")
-            }.toString().toRequestBody("application/json".toMediaType())
-
-            val (client, _) = if (v0) {
-                accountService.createMemosV0Client(host, accessToken)
-            } else {
-                accountService.createMemosV1Client(host, accessToken)
+            savingMessage = R.string.transcribing.string
+            val serverText = transcribeOnServer(file)
+            val transcript = serverText?.takeIf { it.isNotBlank() }
+                ?: transcriber.text.takeIf { it.isNotBlank() }
+            if (serverText == null && transcript == null) {
+                errorMessage = R.string.transcription_failed_saved.string
             }
 
-            val request = okhttp3.Request.Builder()
-                .url("$host/memos.api.AIService/Transcribe")
-                .post(requestBody)
-                .addHeader("Authorization", "Bearer ${accessToken ?: ""}")
-                .addHeader("connect-protocol-version", "1")
-                .addHeader("Content-Type", "application/json")
-                .build()
-
-            val response = client.newCall(request).execute()
-
-            if (response.isSuccessful) {
-                response.body?.string()?.let { responseBody ->
-                    try {
-                        val jsonResponse = Json.parseToJsonElement(responseBody).jsonObject
-                        (jsonResponse["text"] ?: jsonResponse["transcript"])?.jsonPrimitive?.content
-                            ?: "Transcription completed but text is empty"
-                    } catch (e: Exception) {
-                        responseBody.take(200)
-                    }
-                } ?: "Empty response from server"
-            } else {
-                "Transcription failed: ${response.code} ${response.message}"
-            }
-        } catch (e: Exception) {
-            "Error during transcription: ${e.message}"
-        }
-    }
-
-    fun cancelRecording() {
-        try {
-            mediaRecorder?.release()
-            mediaRecorder = null
-            audioFile?.delete()
-            audioFile = null
-            _audioUri.value = null
-            _transcribedText.value = ""
-
-            recordingState = VoiceRecordingState()
-        } catch (e: Exception) {
-            recordingState = recordingState.copy(
-                errorMessage = "Failed to cancel recording: ${e.message}"
+            savingMessage = R.string.saving_voice_memo.string
+            val repository = memoService.getRepository()
+            val resource = repository.createResource(
+                filename = file.name,
+                type = "audio/mp4".toMediaType(),
+                contentUri = Uri.fromFile(file),
+                memoIdentifier = null
             )
+            if (resource !is ApiResponse.Success) {
+                errorMessage = resource.getErrorMessage().ifBlank { R.string.recording_failed.string }
+                savingMessage = null
+                phase = RecorderPhase.DONE
+                return@launch
+            }
+            val visibility = accountService.currentAccount.first()?.let(::defaultVisibility)
+                ?: MemoVisibility.PRIVATE
+            val memo = repository.createMemo(
+                content = transcript ?: VoiceMemoFormat.placeholder(),
+                visibility = visibility,
+                resources = listOf(resource.data)
+            )
+            if (memo is ApiResponse.Success) {
+                file.delete()
+                savedMemoId = memo.data.identifier
+                WidgetUpdater.updateWidgets(appContext)
+            } else {
+                errorMessage = memo.getErrorMessage().ifBlank { R.string.recording_failed.string }
+            }
+            savingMessage = null
+            phase = RecorderPhase.DONE
         }
     }
 
-    suspend fun saveMemo(
-        content: String,
-        visibility: MemoVisibility,
-        accountKey: String
-    ): String? {
-        return try {
-            _isSaving.value = true
-
-            audioFile?.let { file ->
-                val repository = memoService.getRepository()
-
-                val memoContent = if (content.isNotBlank()) {
-                    "$content\n\n**Транскрибация:**\n${_transcribedText.value}"
-                } else {
-                    "**Транскрибация:**\n${_transcribedText.value}"
-                }
-
-                val memoResponse = repository.createMemo(
-                    content = memoContent,
-                    visibility = visibility,
-                    resources = emptyList()
-                )
-
-                (memoResponse as? com.skydoves.sandwich.ApiResponse.Success)?.data?.identifier?.let { memoId ->
-                    try {
-                        val resourceUri = Uri.fromFile(file)
-                        repository.createResource(
-                            filename = file.name,
-                            type = "audio/mp4".toMediaType(),
-                            contentUri = resourceUri,
-                            memoIdentifier = memoId
-                        )
-                    } catch (e: Exception) {
-                        recordingState = recordingState.copy(
-                            errorMessage = "Memo saved but audio upload failed: ${e.message}"
-                        )
-                    }
-
-                    memoId
-                }
-            }
-        } finally {
-            _isSaving.value = false
-            cancelRecording()
+    private fun defaultVisibility(account: Account): MemoVisibility {
+        val info = when (account) {
+            is Account.MemosV0 -> account.info
+            is Account.MemosV1 -> account.info
+            else -> return MemoVisibility.PRIVATE
         }
+        return runCatching { MemoVisibility.valueOf(info.defaultVisibility) }.getOrDefault(MemoVisibility.PRIVATE)
+    }
+
+    /**
+     * Calls `memos.api.AIService/Transcribe` (Connect protocol, JSON). Returns the text, or null
+     * when the server has no transcription configured, rejects the request, or is unreachable.
+     */
+    private suspend fun transcribeOnServer(file: File): String? = withContext(Dispatchers.IO) {
+        val account = accountService.currentAccount.first() as? Account.MemosV1 ?: return@withContext null
+        if (file.length() > MAX_TRANSCRIBE_BYTES) return@withContext null
+        val base = account.info.host.trimEnd('/').toHttpUrlOrNull() ?: return@withContext null
+        val url = base.newBuilder().addPathSegments("memos.api.AIService/Transcribe").build()
+        val body = buildJsonObject {
+            putJsonObject("audio") {
+                put("content", Base64.encodeToString(file.readBytes(), Base64.NO_WRAP))
+                put("filename", file.name)
+                put("contentType", "audio/mp4")
+            }
+        }.toString().toRequestBody("application/json".toMediaType())
+        val request = Request.Builder()
+            .url(url)
+            .post(body)
+            .header("connect-protocol-version", "1")
+            .header("Accept", "application/json")
+            .build()
+        // The account client already adds "Authorization: Bearer <token>" for this host.
+        val client = accountService.httpClient.newBuilder()
+            .readTimeout(3, TimeUnit.MINUTES)
+            .callTimeout(4, TimeUnit.MINUTES)
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                val text = response.body.string()
+                if (!response.isSuccessful) {
+                    Timber.w("Transcribe failed: %d %s", response.code, text.take(300))
+                    return@withContext null
+                }
+                Json.parseToJsonElement(text).jsonObject["text"]?.jsonPrimitive?.contentOrNull?.trim()
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Transcribe request failed")
+            null
+        }
+    }
+
+    private fun startTicker() {
+        tickerJob?.cancel()
+        tickerJob = viewModelScope.launch {
+            while (isActive) {
+                delay(SAMPLE_INTERVAL_MS)
+                if (phase != RecorderPhase.RECORDING) continue
+                elapsedMs = accumulatedMs + (System.currentTimeMillis() - segmentStart)
+                // Peak amplitude since the previous call: this is what makes bars follow loudness.
+                val peak = runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0)
+                amplitudes.add(normalizeAmplitude(peak))
+            }
+        }
+    }
+
+    private fun createRecorder(): MediaRecorder =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            MediaRecorder(appContext)
+        } else {
+            @Suppress("DEPRECATION")
+            MediaRecorder()
+        }
+
+    private fun releaseRecorder() {
+        runCatching { recorder?.release() }
+        recorder = null
     }
 
     override fun onCleared() {
-        try {
-            mediaRecorder?.release()
-            mediaRecorder = null
-        } catch (e: Exception) {
-            // Ignore
+        tickerJob?.cancel()
+        transcriber.destroy()
+        if (phase == RecorderPhase.RECORDING || phase == RecorderPhase.PAUSED) {
+            releaseRecorder()
+            audioFile?.delete()
         }
         super.onCleared()
+    }
+
+    companion object {
+        const val SAMPLE_INTERVAL_MS = 50L
     }
 }

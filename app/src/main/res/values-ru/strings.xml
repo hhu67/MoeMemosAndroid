@@ -93,26 +93,31 @@
     <string name="local_export_success">Локальные данные экспортированы</string>
     <string name="local_export_failed">Не удалось экспортировать локальные данные</string>
     <!-- Voice recording strings -->
-    <string name="voice_recording">Голосовая заметка</string>
-    <string name="start_voice_recording">Запись голоса</string>
-    <string name="record_audio">Записать аудио</string>
+    <string name="voice_memo">Голосовая заметка</string>
+    <string name="start_voice_recording">Записать голосовую заметку</string>
+    <string name="voice_recording_title">%1$s в %2$s</string>
     <string name="pause">Пауза</string>
     <string name="resume">Продолжить</string>
     <string name="stop">Стоп</string>
-    <string name="recording_time" formatted="false">%02d:%02d,%d</string>
+    <string name="listen">Прослушать</string>
     <string name="speech">Речь</string>
-    <string name="waveform">Волна</string>
+    <string name="waveform">Звуковая волна</string>
     <string name="transcription">Расшифровка</string>
-    <string name="play">Воспроизведение</string>
-    <string name="rewind_5">-5s</string>
-    <string name="forward_10">+10s</string>
-    <string name="remaining_time" formatted="false">-%02d:%02d</string>
-    <string name="current_time" formatted="false">%02d:%02d</string>
-    <string name="audio_permission_required">Требуется разрешение на запись аудио для записи голосовых заметок</string>
+    <string name="rewind_5">Назад на 5 секунд</string>
+    <string name="forward_10">Вперёд на 10 секунд</string>
+    <string name="audio_permission_required">Для записи голосовых заметок нужен доступ к микрофону</string>
     <string name="recording_failed">Не удалось записать аудио</string>
-    <string name="transcription_failed">Не удалось расшифровать аудио</string>
-    <string name="save_voice_memo">Сохранить голосовую заметку</string>
-    <string name="discard_recording">Отменить запись</string>
+    <string name="transcribing">Расшифровка…</string>
+    <string name="saving_voice_memo">Сохранение…</string>
+    <string name="transcription_failed_saved">Не удалось расшифровать. Запись сохранена без текста.</string>
+    <string name="transcript_listening">Говорите — расшифровка появится здесь.</string>
+    <string name="transcript_after_stop">Расшифровка будет добавлена после остановки записи.</string>
+    <string name="no_transcript">Для этой записи нет расшифровки</string>
+    <string name="voice_memo_audio_unavailable">Не удалось загрузить запись</string>
+    <string name="edit_transcript">Изменить текст</string>
+    <string name="discard_recording">Удалить запись</string>
+    <string name="discard_recording_title">Удалить эту запись?</string>
+    <string name="discard_recording_message">Запись не будет сохранена.</string>
 
     <string name="memos_widget_title">Заметки</string>
     <string name="memory_widget_title">Воспоминание</string>

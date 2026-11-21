@@ -16,5 +16,4 @@ object RouteName {
     const val EXPLORE = "explore"
     const val ACCOUNT = "account"
     const val VOICE_RECORDING = "voice-recording"
-    const val VOICE_MEMO_PLAYER = "voice-memo-player"
 }

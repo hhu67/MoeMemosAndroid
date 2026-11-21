@@ -144,26 +144,31 @@
     <string name="open_system_security_settings">Open system security settings</string>
 
     <!-- Voice recording strings -->
-    <string name="voice_recording">Voice Memo</string>
-    <string name="start_voice_recording">Voice Record</string>
-    <string name="record_audio">Record Audio</string>
+    <string name="voice_memo">Voice memo</string>
+    <string name="start_voice_recording">Record voice memo</string>
+    <string name="voice_recording_title">%1$s at %2$s</string>
     <string name="pause">Pause</string>
     <string name="resume">Resume</string>
     <string name="stop">Stop</string>
-    <string name="recording_time" formatted="false">%02d:%02d,%d</string>
+    <string name="listen">Play</string>
     <string name="speech">Speech</string>
     <string name="waveform">Waveform</string>
-    <string name="transcription">Transcription</string>
-    <string name="play">Play</string>
-    <string name="rewind_5">-5s</string>
-    <string name="forward_10">+10s</string>
-    <string name="remaining_time" formatted="false">-%02d:%02d</string>
-    <string name="current_time" formatted="false">%02d:%02d</string>
-    <string name="audio_permission_required">Audio permission is required to record voice memos</string>
+    <string name="transcription">Transcript</string>
+    <string name="rewind_5">Back 5 seconds</string>
+    <string name="forward_10">Forward 10 seconds</string>
+    <string name="audio_permission_required">Microphone permission is required to record voice memos</string>
     <string name="recording_failed">Failed to record audio</string>
-    <string name="transcription_failed">Failed to transcribe audio</string>
-    <string name="save_voice_memo">Save Voice Memo</string>
-    <string name="discard_recording">Discard Recording</string>
+    <string name="transcribing">Transcribing…</string>
+    <string name="saving_voice_memo">Saving…</string>
+    <string name="transcription_failed_saved">Transcription failed. The recording was saved without text.</string>
+    <string name="transcript_listening">Start speaking. The transcript appears here.</string>
+    <string name="transcript_after_stop">The transcript will be added after you stop recording.</string>
+    <string name="no_transcript">No transcript for this recording</string>
+    <string name="voice_memo_audio_unavailable">Could not load the recording</string>
+    <string name="edit_transcript">Edit text</string>
+    <string name="discard_recording">Delete recording</string>
+    <string name="discard_recording_title">Delete this recording?</string>
+    <string name="discard_recording_message">The recording will not be saved.</string>
 
     <!-- Widget strings -->
     <string name="memos_widget_title">Memos</string>

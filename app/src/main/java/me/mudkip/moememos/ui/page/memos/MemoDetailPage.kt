@@ -50,6 +50,8 @@ import me.mudkip.moememos.ext.string
 import me.mudkip.moememos.ext.titleResource
 import me.mudkip.moememos.ui.component.MemoContent
 import me.mudkip.moememos.ui.component.MemosCardActionButton
+import me.mudkip.moememos.ui.page.voicerecording.VoiceMemoPlayer
+import me.mudkip.moememos.util.VoiceMemoFormat
 import me.mudkip.moememos.viewmodel.LocalMemos
 import me.mudkip.moememos.viewmodel.LocalUserState
 
@@ -83,6 +85,12 @@ internal fun MemoDetailContent(memoIdentifier: String, onBack: () -> Unit) {
             memo != null -> hadMemo = true
             hadMemo -> onBack()
         }
+    }
+
+    val voiceAudio = memo?.let(VoiceMemoFormat::audioOf)
+    if (memo != null && voiceAudio != null) {
+        VoiceMemoPlayer(memo = memo, audio = voiceAudio, onBack = onBack)
+        return
     }
 
     Scaffold(
