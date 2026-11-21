@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import me.mudkip.moememos.data.model.MemoVisibility
 import me.mudkip.moememos.data.service.AccountService
@@ -246,8 +248,8 @@ class VoiceRecordingViewModel @Inject constructor(
             if (response.isSuccessful) {
                 response.body?.string()?.let { responseBody ->
                     try {
-                        val jsonResponse = Json.parseToJsonElement(responseBody).asJsonObject
-                        jsonResponse["text"]?.asJsonPrimitive?.content
+                        val jsonResponse = Json.parseToJsonElement(responseBody).jsonObject
+                        (jsonResponse["text"] ?: jsonResponse["transcript"])?.jsonPrimitive?.content
                             ?: "Transcription completed but text is empty"
                     } catch (e: Exception) {
                         responseBody.take(200)

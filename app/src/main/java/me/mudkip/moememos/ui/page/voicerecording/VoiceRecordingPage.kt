@@ -40,6 +40,7 @@ import me.mudkip.moememos.viewmodel.VoiceRecordingViewModel
 import kotlin.math.abs
 import kotlin.random.Random
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VoiceRecordingPage(
     viewModel: VoiceRecordingViewModel = hiltViewModel(),
