@@ -6,7 +6,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -33,6 +32,19 @@ import me.mudkip.moememos.ext.string
 import me.mudkip.moememos.ui.component.ActionIconButton
 import kotlin.math.abs
 import kotlin.random.Random
+
+private val MediaPlayer.durationMs: Long
+    get() = duration.toLong()
+
+private val MediaPlayer.currentPositionMs: Long
+    get() = currentPosition.toLong()
+
+private fun formatTime(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return String.format("%02d:%02d", minutes, seconds)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,7 +85,7 @@ fun VoiceMemoPlayerPage(
     // Update current position and waveform
     LaunchedEffect(isPlaying) {
         while (isPlaying && mediaPlayer != null) {
-            currentPosition = mediaPlayer!!.currentPosition.toLong()
+            currentPosition = mediaPlayer!!.currentPositionMs
 
             // Generate waveform based on playback position
             waveformAmplitudes = (0..30).map { index ->
@@ -103,15 +115,12 @@ fun VoiceMemoPlayerPage(
                         Text(
                             text = recordingDate.ifEmpty { "Voice Memo" },
                             fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 },
                 navigationIcon = {
-                    ActionIconButton(
-                        label = R.string.back.string,
-                        onClick = onBack
-                    ) {
+                    IconButton(onClick = onBack) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = R.string.back.string
@@ -119,217 +128,123 @@ fun VoiceMemoPlayerPage(
                     }
                 },
                 actions = {
-                    ActionIconButton(
-                        label = "Favorite",
-                        onClick = { isFavorited = !isFavorited }
-                    ) {
+                    IconButton(onClick = { isFavorited = !isFavorited }) {
                         Icon(
                             Icons.Filled.Star,
                             contentDescription = "Favorite",
-                            tint = if (isFavorited) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurfaceVariant
+                            tint = if (isFavorited) Color.Yellow else Color.Gray
                         )
                     }
-                    Box {
-                        ActionIconButton(
-                            label = "More",
-                            onClick = { showMoreMenu = !showMoreMenu }
-                        ) {
-                            Icon(
-                                Icons.Filled.MoreVert,
-                                contentDescription = "More"
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showMoreMenu,
-                            onDismissRequest = { showMoreMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text(R.string.delete.string) },
-                                onClick = {
-                                    onDelete()
-                                    showMoreMenu = false
-                                }
-                            )
-                        }
+                    IconButton(onClick = { showMoreMenu = !showMoreMenu }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "More")
                     }
                 }
             )
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(16.dp)
-                .background(MaterialTheme.colorScheme.background)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceEvenly
-        ) {
-            // Player card with tabs
-            VoiceMemoPlayerCard(
-                selectedTab = selectedTab,
-                onTabChanged = { selectedTab = it },
-                waveformAmplitudes = waveformAmplitudes,
-                transcription = transcription,
-                currentPosition = currentPosition,
-                duration = duration
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Timeline
-            Timeline(
-                currentPosition = currentPosition,
-                duration = duration,
-                onSeek = { position ->
-                    mediaPlayer?.seekTo(position.toInt())
-                    currentPosition = position
-                }
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Playback controls
-            PlaybackControls(
-                isPlaying = isPlaying,
-                onPlayPause = {
-                    if (mediaPlayer == null) return@PlaybackControls
-                    if (isPlaying) {
-                        mediaPlayer!!.pause()
-                        isPlaying = false
-                    } else {
-                        mediaPlayer!!.start()
-                        isPlaying = true
-                    }
-                },
-                onRewind = {
-                    val newPos = (currentPosition - 5000).coerceAtLeast(0L)
-                    mediaPlayer?.seekTo(newPos.toInt())
-                    currentPosition = newPos
-                },
-                onForward = {
-                    val newPos = (currentPosition + 10000).coerceAtMost(duration)
-                    mediaPlayer?.seekTo(newPos.toInt())
-                    currentPosition = newPos
-                }
-            )
-        }
-    }
-}
-
-@Composable
-private fun VoiceMemoPlayerCard(
-    selectedTab: Int,
-    onTabChanged: (Int) -> Unit,
-    waveformAmplitudes: List<Float>,
-    transcription: String,
-    currentPosition: Long,
-    duration: Long
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Content based on selected tab
-        if (selectedTab == 0) {
-            // Waveform with playback indicator
-            PlayerWaveform(
-                amplitudes = waveformAmplitudes,
-                progress = if (duration > 0) currentPosition.toFloat() / duration else 0f
-            )
-        } else {
-            // Transcription display
-            Box(
+        },
+        content = { paddingValues ->
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 120.dp, max = 200.dp)
-                    .background(
-                        MaterialTheme.colorScheme.surfaceContainerLow,
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                    .padding(12.dp)
-                    .verticalScroll(rememberScrollState()),
-                contentAlignment = Alignment.TopStart
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Text(
-                    text = transcription.ifEmpty { "No transcription available" },
-                    fontSize = 14.sp,
-                    color = if (transcription.isEmpty())
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    else
-                        MaterialTheme.colorScheme.onSurface,
-                    lineHeight = 20.sp
+                // Card with waveform or transcription
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        if (selectedTab == 0) {
+                            PlayerWaveform(
+                                amplitudes = waveformAmplitudes,
+                                progress = if (duration > 0) currentPosition.toFloat() / duration else 0f
+                            )
+                        } else {
+                            Text(
+                                text = transcription.ifEmpty { "No transcription available" },
+                                fontSize = 14.sp,
+                                color = if (transcription.isEmpty())
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                else
+                                    MaterialTheme.colorScheme.onSurface,
+                                lineHeight = 20.sp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 100.dp, max = 300.dp)
+                                    .verticalScroll(rememberScrollState())
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Tab switcher
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            TabButtonPlayer(
+                                modifier = Modifier.weight(1f),
+                                isSelected = selectedTab == 0,
+                                onClick = { selectedTab = 0 },
+                                label = "〰️"
+                            )
+                            TabButtonPlayer(
+                                modifier = Modifier.weight(1f),
+                                isSelected = selectedTab == 1,
+                                onClick = { selectedTab = 1 },
+                                label = "📝"
+                            )
+                        }
+                    }
+                }
+
+                // Timeline
+                Timeline(
+                    currentPosition = currentPosition,
+                    duration = duration,
+                    onSeek = { mediaPlayer?.seekTo(it.toInt()) }
+                )
+
+                // Playback controls
+                PlaybackControls(
+                    isPlaying = isPlaying,
+                    onPlayPause = {
+                        if (isPlaying) {
+                            mediaPlayer?.pause()
+                        } else {
+                            mediaPlayer?.start()
+                        }
+                        isPlaying = !isPlaying
+                    },
+                    onRewind = {
+                        val newPos = (currentPosition - 5000).coerceAtLeast(0)
+                        mediaPlayer?.seekTo(newPos.toInt())
+                    },
+                    onForward = {
+                        val newPos = (currentPosition + 10000).coerceAtMost(duration)
+                        mediaPlayer?.seekTo(newPos.toInt())
+                    }
                 )
             }
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Tab switcher
-        TabSwitcherPlayer(selectedTab = selectedTab, onTabChanged = { selectedTab = it })
-    }
+    )
 }
 
 @Composable
-private fun TabSwitcherPlayer(
-    selectedTab: Int,
-    onTabChanged: (Int) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        TabButtonPlayer(
-            modifier = Modifier.weight(1f),
-            isSelected = selectedTab == 0,
-            onClick = { onTabChanged(0) },
-            label = "〰️"
-        )
-        TabButtonPlayer(
-            modifier = Modifier.weight(1f),
-            isSelected = selectedTab == 1,
-            onClick = { onTabChanged(1) },
-            label = "📝"
-        )
-    }
-}
-
-@Composable
-private fun TabButtonPlayer(
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    label: String,
-    modifier: Modifier = Modifier
-) {
-    Button(
-        modifier = modifier
-            .height(36.dp)
-            .fillMaxWidth(),
-        onClick = onClick,
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (isSelected)
-                MaterialTheme.colorScheme.primary
-            else
-                Color.Transparent,
-            contentColor = if (isSelected)
-                MaterialTheme.colorScheme.onPrimary
-            else
-                MaterialTheme.colorScheme.onSurfaceVariant
-        ),
-        shape = RoundedCornerShape(6.dp)
-    ) {
-        Text(label, fontSize = 16.sp)
-    }
-
-@Composable
-private fun PlayerWaveform(
+fun PlayerWaveform(
     amplitudes: List<Float>,
     progress: Float
 ) {
@@ -373,7 +288,7 @@ private fun PlayerWaveform(
 }
 
 @Composable
-private fun Timeline(
+fun Timeline(
     currentPosition: Long,
     duration: Long,
     onSeek: (Long) -> Unit
@@ -416,7 +331,7 @@ private fun Timeline(
 }
 
 @Composable
-private fun PlaybackControls(
+fun PlaybackControls(
     isPlaying: Boolean,
     onPlayPause: () -> Unit,
     onRewind: () -> Unit,
@@ -486,15 +401,30 @@ private fun PlaybackControls(
     }
 }
 
-private fun formatTime(ms: Long): String {
-    val totalSeconds = ms / 1000
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return String.format("%02d:%02d", minutes, seconds)
+@Composable
+fun TabButtonPlayer(
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        modifier = modifier
+            .height(36.dp)
+            .fillMaxWidth(),
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (isSelected)
+                MaterialTheme.colorScheme.primary
+            else
+                Color.Transparent,
+            contentColor = if (isSelected)
+                MaterialTheme.colorScheme.onPrimary
+            else
+                MaterialTheme.colorScheme.onSurfaceVariant
+        ),
+        shape = RoundedCornerShape(6.dp)
+    ) {
+        Text(label, fontSize = 16.sp)
+    }
 }
-
-private val MediaPlayer.durationMs: Long
-    get() = duration.toLong()
-
-private val MediaPlayer.currentPositionMs: Long
-    get() = currentPosition.toLong()

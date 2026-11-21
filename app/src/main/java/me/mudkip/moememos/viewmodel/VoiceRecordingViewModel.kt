@@ -219,7 +219,7 @@ class VoiceRecordingViewModel @Inject constructor(
     ): String {
         return try {
             val audioBytes = audioFile.readBytes()
-            val base64Audio = Base64.getEncoder().encodeToString(audioBytes)!!
+            val base64Audio = Base64.encodeToString(audioBytes, Base64.NO_WRAP)
 
             val requestBody = buildJsonObject {
                 put("audio_content", base64Audio)
@@ -246,8 +246,8 @@ class VoiceRecordingViewModel @Inject constructor(
             if (response.isSuccessful) {
                 response.body?.string()?.let { responseBody ->
                     try {
-                        val jsonResponse = Json.parseToJsonElement(responseBody)
-                        jsonResponse.jsonObject["text"]?.jsonPrimitive?.content
+                        val jsonResponse = Json.parseToJsonElement(responseBody).asJsonObject
+                        jsonResponse["text"]?.asJsonPrimitive?.content
                             ?: "Transcription completed but text is empty"
                     } catch (e: Exception) {
                         responseBody.take(200)
@@ -301,7 +301,7 @@ class VoiceRecordingViewModel @Inject constructor(
                     resources = emptyList()
                 )
 
-                memoResponse.getOrNull()?.identifier?.let { memoId ->
+                (memoResponse as? com.skydoves.sandwich.ApiResponse.Success)?.data?.identifier?.let { memoId ->
                     try {
                         val resourceUri = Uri.fromFile(file)
                         repository.createResource(
