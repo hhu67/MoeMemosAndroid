@@ -58,9 +58,15 @@ import me.mudkip.moememos.R
 import me.mudkip.moememos.data.model.Account
 import me.mudkip.moememos.ext.string
 import me.mudkip.moememos.ui.component.SyncStatusBadge
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import me.mudkip.moememos.ui.page.common.LocalRootNavController
 import me.mudkip.moememos.ui.page.common.RouteName
-import me.mudkip.moememos.util.QuickVoiceRecordOverlay
+import me.mudkip.moememos.util.DynamicVoiceRecordButton
 import me.mudkip.moememos.viewmodel.LocalMemos
 import me.mudkip.moememos.viewmodel.LocalUserState
 import me.mudkip.moememos.viewmodel.ManualSyncResult
@@ -127,9 +133,8 @@ private fun MemosHomePageContent(
     }
 
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
-            topBar = {
+    Scaffold(
+        topBar = {
             TopAppBar(
                 title = { Text(text = R.string.memos.string) },
                 navigationIcon = {
@@ -165,94 +170,93 @@ private fun MemosHomePageContent(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Quick voice note button: tap for full recorder screen, hold for dynamic Telegram-style recording
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(CircleShape)
-                        .background(VoiceRecordRed)
-                        .pointerInput(Unit) {
-                            awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                val downTime = SystemClock.elapsedRealtime()
-                                val startX = down.position.x
-                                var isHold = false
-                                var cancelTriggered = false
-                                val holdTimeout = 220L
+                // The actual voice memo button itself: expands and becomes a live dynamic Telegram blob
+                DynamicVoiceRecordButton(
+                    isRecording = quickRecorder.isRecording,
+                    amplitude = quickRecorder.amplitude,
+                    dragOffsetX = dragOffsetX,
+                    isCancelActive = isCancelActive,
+                    modifier = Modifier.pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val downTime = SystemClock.elapsedRealtime()
+                            val startX = down.position.x
+                            var isHold = false
+                            var cancelTriggered = false
+                            val holdTimeout = 220L
 
-                                while (true) {
-                                    val event = awaitPointerEvent(PointerEventPass.Main)
-                                    val pressed = event.changes.filter { it.pressed }
-                                    val now = SystemClock.elapsedRealtime()
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Main)
+                                val pressed = event.changes.filter { it.pressed }
+                                val now = SystemClock.elapsedRealtime()
 
-                                    if (!isHold && now - downTime >= holdTimeout) {
-                                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                                            PackageManager.PERMISSION_GRANTED
-                                        ) {
-                                            isHold = true
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            dragOffsetX = 0f
-                                            isCancelActive = false
-                                            quickRecorder.start()
-                                        } else {
-                                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                            break
-                                        }
-                                    }
-
-                                    if (pressed.isEmpty()) {
-                                        if (isHold) {
-                                            if (cancelTriggered) {
-                                                quickRecorder.cancel()
-                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            } else {
-                                                quickRecorder.stopAndSave()
-                                                Toast.makeText(context, R.string.voice_memo_saved.string, Toast.LENGTH_SHORT).show()
-                                            }
-                                        } else {
-                                            if (now - downTime < holdTimeout) {
-                                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                                                    PackageManager.PERMISSION_GRANTED
-                                                ) {
-                                                    rootNavController.navigate(RouteName.VOICE_RECORDING)
-                                                } else {
-                                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                                }
-                                            }
-                                        }
+                                if (!isHold && now - downTime >= holdTimeout) {
+                                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                                        PackageManager.PERMISSION_GRANTED
+                                    ) {
+                                        isHold = true
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         dragOffsetX = 0f
                                         isCancelActive = false
+                                        quickRecorder.start()
+                                    } else {
+                                        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                         break
                                     }
+                                }
 
-                                    val pointer = pressed.first()
+                                if (pressed.isEmpty()) {
                                     if (isHold) {
-                                        pointer.consume()
-                                        val dx = pointer.position.x - startX
-                                        dragOffsetX = dx.coerceAtMost(0f)
-                                        cancelTriggered = dragOffsetX < -220f
-                                        isCancelActive = cancelTriggered
+                                        if (cancelTriggered) {
+                                            quickRecorder.cancel()
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        } else {
+                                            quickRecorder.stopAndSave()
+                                            Toast.makeText(context, R.string.voice_memo_saved.string, Toast.LENGTH_SHORT).show()
+                                        }
+                                    } else {
+                                        if (now - downTime < holdTimeout) {
+                                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                                                PackageManager.PERMISSION_GRANTED
+                                            ) {
+                                                rootNavController.navigate(RouteName.VOICE_RECORDING)
+                                            } else {
+                                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                            }
+                                        }
                                     }
+                                    dragOffsetX = 0f
+                                    isCancelActive = false
+                                    break
+                                }
+
+                                val pointer = pressed.first()
+                                if (isHold) {
+                                    pointer.consume()
+                                    val dx = pointer.position.x - startX
+                                    dragOffsetX = dx.coerceAtMost(0f)
+                                    cancelTriggered = dragOffsetX < -220f
+                                    isCancelActive = cancelTriggered
                                 }
                             }
-                        },
-                    contentAlignment = Alignment.Center
+                        }
+                    }
+                )
+
+                AnimatedVisibility(
+                    visible = !quickRecorder.isRecording,
+                    enter = fadeIn(tween(150)) + expandHorizontally(),
+                    exit = fadeOut(tween(150)) + shrinkHorizontally()
                 ) {
-                    Icon(
-                        Icons.Filled.Mic,
-                        contentDescription = R.string.start_voice_recording.string,
-                        tint = Color.White
+                    ExtendedFloatingActionButton(
+                        onClick = {
+                            rootNavController.navigate(RouteName.INPUT)
+                        },
+                        expanded = expandedFab,
+                        text = { Text(R.string.new_memo.string) },
+                        icon = { Icon(Icons.Filled.Add, contentDescription = R.string.compose.string) }
                     )
                 }
-
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        rootNavController.navigate(RouteName.INPUT)
-                    },
-                    expanded = expandedFab,
-                    text = { Text(R.string.new_memo.string) },
-                    icon = { Icon(Icons.Filled.Add, contentDescription = R.string.compose.string) }
-                )
             }
         },
 
@@ -272,15 +276,6 @@ private fun MemosHomePageContent(
             )
         }
     )
-
-    QuickVoiceRecordOverlay(
-        isRecording = quickRecorder.isRecording,
-        amplitude = quickRecorder.amplitude,
-        elapsedMs = quickRecorder.elapsedMs,
-        dragOffsetX = dragOffsetX,
-        isCancelActive = isCancelActive
-    )
-}
 
     when (val alert = syncAlert) {
         null -> Unit

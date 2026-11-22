@@ -233,99 +233,26 @@ class QuickVoiceRecorder(
 }
 
 /**
- * Fullscreen overlay showing the Telegram-style organic audio blob that expands in multiple
- * directions according to the speaker's loudness.
+ * The actual voice memo button on the home screen.
+ * In idle state: shows standard red circle button with microphone.
+ * In hold-to-record state: the button itself expands and becomes a live dynamic Telegram-style
+ * morphing blob that grows in multiple directions according to voice amplitude, smoothly tracking
+ * swipe-to-cancel gestures directly on the button without any extra corner overlays or text.
  */
 @Composable
-fun QuickVoiceRecordOverlay(
+fun DynamicVoiceRecordButton(
     isRecording: Boolean,
     amplitude: Float,
-    elapsedMs: Long,
     dragOffsetX: Float,
     isCancelActive: Boolean,
     modifier: Modifier = Modifier
 ) {
-    AnimatedVisibility(
-        visible = isRecording,
-        enter = fadeIn(tween(180)),
-        exit = fadeOut(tween(180))
-    ) {
-        Box(
-            modifier = modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.40f))
-        ) {
-            // Cancel status & timer pill positioned to the left of the recording button
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 100.dp, bottom = 24.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Color(0xFF242424))
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                RecordingDot(active = !isCancelActive)
-                Text(
-                    text = formatClock(elapsedMs),
-                    color = Color.White,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                Spacer(Modifier.width(4.dp))
-                if (isCancelActive) {
-                    Icon(
-                        Icons.Filled.Delete,
-                        contentDescription = null,
-                        tint = RedBallColor,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        text = R.string.release_to_cancel.string,
-                        color = RedBallColor,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                } else {
-                    Text(
-                        text = R.string.slide_to_cancel.string,
-                        color = Color(0xFFAAAAAA),
-                        fontSize = 13.sp
-                    )
-                }
-            }
-
-            // Telegram-style dynamic morphing blob ball in the bottom-right corner
-            DynamicTelegramBlob(
-                amplitude = amplitude,
-                dragOffsetX = dragOffsetX,
-                isCancelActive = isCancelActive,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 4.dp, bottom = 4.dp)
-            )
-        }
-    }
-}
-
-/**
- * Telegram-style liquid morphing blob ball with multiple harmonic lobes that grow in specific
- * directions proportional to the speaker's loudness.
- */
-@Composable
-private fun DynamicTelegramBlob(
-    amplitude: Float,
-    dragOffsetX: Float,
-    isCancelActive: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val infiniteTransition = rememberInfiniteTransition(label = "telegram_blob")
+    val infiniteTransition = rememberInfiniteTransition(label = "telegram_button_blob")
     val phase1 by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 2f * PI.toFloat(),
         animationSpec = infiniteRepeatable(
-            animation = tween(2400, easing = LinearEasing),
+            animation = tween(2200, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "phase1"
@@ -334,14 +261,14 @@ private fun DynamicTelegramBlob(
         initialValue = 0f,
         targetValue = 2f * PI.toFloat(),
         animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = LinearEasing),
+            animation = tween(1600, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "phase2"
     )
 
     val animatedAmp by animateFloatAsState(
-        targetValue = amplitude.coerceIn(0f, 1f),
+        targetValue = if (isRecording) amplitude.coerceIn(0f, 1f) else 0f,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessLow
@@ -349,50 +276,61 @@ private fun DynamicTelegramBlob(
         label = "animatedAmp"
     )
 
+    val scale by animateFloatAsState(
+        targetValue = if (isRecording) 1.28f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "buttonScale"
+    )
+
+    val baseColor = if (isCancelActive) Color(0xFF4A4A4A) else RedBallColor
+
     Box(
-        modifier = modifier.size(140.dp),
+        modifier = modifier.size(56.dp),
         contentAlignment = Alignment.Center
     ) {
-        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-            val cx = size.width / 2 + (dragOffsetX.coerceAtMost(0f) * 0.35f)
+        androidx.compose.foundation.Canvas(modifier = Modifier.size(160.dp)) {
+            val cx = size.width / 2 + (dragOffsetX.coerceAtMost(0f) * 0.50f)
             val cy = size.height / 2
             val center = Offset(cx, cy)
 
-            val baseColor = if (isCancelActive) Color.DarkGray else RedBallColor
+            if (isRecording) {
+                // 1. Outer dynamic pulsing layer (4 lobes expanding in specific directions)
+                val outerPath = Path()
+                val outerBaseR = 34.dp.toPx() * scale
+                val outerExtraR = 28.dp.toPx() * animatedAmp
+                val steps = 72
+                for (i in 0..steps) {
+                    val theta = (i * 2f * PI.toFloat()) / steps
+                    val lobe = 0.35f * sin(3f * theta + phase1) + 0.25f * cos(4f * theta - phase2)
+                    val r = outerBaseR + outerExtraR * (1f + lobe)
+                    val x = cx + r * cos(theta)
+                    val y = cy + r * sin(theta)
+                    if (i == 0) outerPath.moveTo(x, y) else outerPath.lineTo(x, y)
+                }
+                outerPath.close()
+                drawPath(outerPath, color = baseColor.copy(alpha = 0.20f))
 
-            // Outer layer: 4 lobes expanding in specific directions
-            val outerPath = Path()
-            val outerBaseR = 36.dp.toPx()
-            val outerExtraR = 34.dp.toPx() * animatedAmp
-            val steps = 72
-            for (i in 0..steps) {
-                val theta = (i * 2f * PI.toFloat()) / steps
-                val lobe = 0.35f * sin(3f * theta + phase1) + 0.25f * cos(4f * theta - phase2)
-                val r = outerBaseR + outerExtraR * (1f + lobe)
-                val x = cx + r * cos(theta)
-                val y = cy + r * sin(theta)
-                if (i == 0) outerPath.moveTo(x, y) else outerPath.lineTo(x, y)
+                // 2. Middle dynamic pulsing layer (5 lobes)
+                val midPath = Path()
+                val midBaseR = 30.dp.toPx() * scale
+                val midExtraR = 18.dp.toPx() * animatedAmp
+                for (i in 0..steps) {
+                    val theta = (i * 2f * PI.toFloat()) / steps
+                    val lobe = 0.28f * sin(4f * theta - phase2) + 0.22f * cos(5f * theta + phase1)
+                    val r = midBaseR + midExtraR * (1f + lobe)
+                    val x = cx + r * cos(theta)
+                    val y = cy + r * sin(theta)
+                    if (i == 0) midPath.moveTo(x, y) else midPath.lineTo(x, y)
+                }
+                midPath.close()
+                drawPath(midPath, color = baseColor.copy(alpha = 0.38f))
             }
-            outerPath.close()
-            drawPath(outerPath, color = baseColor.copy(alpha = 0.20f))
 
-            // Middle layer: 5 lobes
-            val midPath = Path()
-            val midBaseR = 32.dp.toPx()
-            val midExtraR = 22.dp.toPx() * animatedAmp
-            for (i in 0..steps) {
-                val theta = (i * 2f * PI.toFloat()) / steps
-                val lobe = 0.28f * sin(4f * theta - phase2) + 0.22f * cos(5f * theta + phase1)
-                val r = midBaseR + midExtraR * (1f + lobe)
-                val x = cx + r * cos(theta)
-                val y = cy + r * sin(theta)
-                if (i == 0) midPath.moveTo(x, y) else midPath.lineTo(x, y)
-            }
-            midPath.close()
-            drawPath(midPath, color = baseColor.copy(alpha = 0.38f))
-
-            // Core solid ball expanding smoothly with amplitude
-            val coreR = 28.dp.toPx() + (8.dp.toPx() * animatedAmp)
+            // 3. Core solid ball
+            val coreR = (28.dp.toPx() * scale) + (6.dp.toPx() * animatedAmp)
             drawCircle(
                 color = baseColor,
                 radius = coreR,
@@ -400,17 +338,16 @@ private fun DynamicTelegramBlob(
             )
         }
 
-        // Center icon following the ball offset
+        // Center icon following drag offset
+        val iconOffsetPx = dragOffsetX.coerceAtMost(0f) * 0.50f
         Box(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .padding(end = (-dragOffsetX.coerceAtMost(0f) * 0.35f).dp)
+            modifier = Modifier.padding(end = (-iconOffsetPx).coerceAtLeast(0f).dp)
         ) {
             Icon(
                 imageVector = if (isCancelActive) Icons.Filled.Delete else Icons.Filled.Mic,
                 contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(26.dp)
             )
         }
     }
