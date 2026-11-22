@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
+import android.net.Uri
 import android.os.SystemClock
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -79,10 +81,12 @@ import me.mudkip.moememos.data.local.entity.ResourceEntity
 import me.mudkip.moememos.ext.navigateToMemoEditor
 import me.mudkip.moememos.ext.string
 import me.mudkip.moememos.ui.page.common.LocalRootNavController
+import me.mudkip.moememos.ui.page.common.RouteName
 import me.mudkip.moememos.util.VoiceMemoFormat
 import me.mudkip.moememos.util.extractWaveform
 import me.mudkip.moememos.util.formatClock
 import me.mudkip.moememos.util.formatVoiceTitle
+import me.mudkip.moememos.util.resolveAudioFile
 import me.mudkip.moememos.util.transcribeAudioFile
 import me.mudkip.moememos.viewmodel.LocalMemos
 import me.mudkip.moememos.viewmodel.LocalUserState
@@ -123,6 +127,7 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
 
     var playbackAnchorRealtime by remember { mutableLongStateOf(0L) }
     var playbackAnchorPositionMs by remember { mutableLongStateOf(0L) }
+    var playStartRealtime by remember { mutableLongStateOf(0L) }
 
     RecorderSystemBars()
 
@@ -163,12 +168,15 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
         seekTo(target)
         if (wasPlayingBeforeScrub) {
             player?.start()
+            playStartRealtime = SystemClock.elapsedRealtime()
             playing = true
         }
     }
 
     LaunchedEffect(audio.identifier) {
-        val resolved = resolveAudioFile(context, audio, userStateViewModel.okHttpClient, memosViewModel)
+        val resolved = resolveAudioFile(context, audio, userStateViewModel.okHttpClient) { id, uri ->
+            memosViewModel.cacheResourceFile(id, uri)
+        }
         if (resolved == null) loadFailed = true else file = resolved
     }
 
@@ -212,6 +220,7 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
     // High refresh rate smooth position updates locked to display frames
     LaunchedEffect(playing) {
         if (!playing) return@LaunchedEffect
+        playStartRealtime = SystemClock.elapsedRealtime()
         updatePlaybackAnchor(positionMs)
         while (playing && isActive) {
             withFrameNanos { _ ->
@@ -220,9 +229,13 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
                     val est = (playbackAnchorPositionMs + elapsed).coerceIn(0L, durationMs)
                     positionMs = est
 
-                    // Sync check against MediaPlayer to correct any drift
+                    // Sync check against MediaPlayer to correct any drift.
+                    // Ignore transient backward readings during the first 350ms after resume.
                     val actual = player?.currentPosition?.toLong() ?: est
-                    if (abs(actual - est) > 150) {
+                    val timeSinceStart = SystemClock.elapsedRealtime() - playStartRealtime
+                    val isInitialStartup = timeSinceStart < 350L && actual < est
+
+                    if (!isInitialStartup && abs(actual - est) > 200) {
                         playbackAnchorPositionMs = actual
                         playbackAnchorRealtime = SystemClock.elapsedRealtime()
                         positionMs = actual
@@ -240,11 +253,14 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
         if (playing) {
             mp.pause()
             playing = false
-            updatePlaybackAnchor(positionMs)
+            val current = mp.currentPosition.toLong().coerceIn(0L, durationMs)
+            updatePlaybackAnchor(current)
         } else {
             if (positionMs >= durationMs) seekTo(0)
+            val current = positionMs.coerceIn(0L, durationMs)
+            updatePlaybackAnchor(current)
             mp.start()
-            updatePlaybackAnchor(positionMs)
+            playStartRealtime = SystemClock.elapsedRealtime()
             playing = true
         }
     }
@@ -309,6 +325,16 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
                     Icon(Icons.Filled.MoreVert, R.string.more_options.string, tint = RecorderColors.OnBackground)
                 }
                 DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    DropdownMenuItem(
+                        text = { Text(R.string.resume_recording.string) },
+                        enabled = file != null,
+                        onClick = {
+                            menuExpanded = false
+                            player?.pause()
+                            playing = false
+                            rootNavController.navigate("${RouteName.VOICE_RECORDING}?resumeMemoId=${Uri.encode(memo.identifier)}")
+                        }
+                    )
                     DropdownMenuItem(
                         text = { Text(if (transcript == null) R.string.transcribe_recording.string else R.string.transcribe_action.string) },
                         enabled = file != null && !isTranscribing,
@@ -403,20 +429,20 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
         }
         Spacer(Modifier.height(16.dp))
 
-        // Playback controls: back 5 s, play / pause, forward 10 s.
+        // Playback controls: back 5 s, play / pause, forward 10 s, resume recording.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(84.dp)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             RoundControl(
                 onClick = { seekTo(positionMs - REWIND_MS) },
                 enabled = player != null,
                 label = R.string.rewind_5.string
-            ) { Icon(Icons.Filled.Replay5, null, tint = RecorderColors.OnBackground, modifier = Modifier.size(28.dp)) }
+            ) { Icon(Icons.Filled.Replay5, null, tint = RecorderColors.OnBackground, modifier = Modifier.size(26.dp)) }
 
             Button(
                 onClick = ::togglePlay,
@@ -432,10 +458,10 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
                 )
             ) {
                 Icon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, null, modifier = Modifier.size(26.dp))
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(6.dp))
                 Text(
                     if (playing) R.string.pause.string else R.string.listen.string,
-                    fontSize = 20.sp,
+                    fontSize = 19.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -446,7 +472,24 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
                 onClick = { seekTo(positionMs + FORWARD_MS) },
                 enabled = player != null,
                 label = R.string.forward_10.string
-            ) { Icon(Icons.Filled.Forward10, null, tint = RecorderColors.OnBackground, modifier = Modifier.size(28.dp)) }
+            ) { Icon(Icons.Filled.Forward10, null, tint = RecorderColors.OnBackground, modifier = Modifier.size(26.dp)) }
+
+            RoundControl(
+                onClick = {
+                    player?.pause()
+                    playing = false
+                    rootNavController.navigate("${RouteName.VOICE_RECORDING}?resumeMemoId=${Uri.encode(memo.identifier)}")
+                },
+                enabled = file != null,
+                label = R.string.resume_recording.string
+            ) {
+                Icon(
+                    Icons.Filled.Mic,
+                    contentDescription = R.string.resume_recording.string,
+                    tint = RecorderColors.RecordButton,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
         }
     }
 
@@ -566,43 +609,6 @@ private fun RoundControl(onClick: () -> Unit, enabled: Boolean, label: String, i
     ) {
         icon()
     }
-}
-
-/** Returns a local copy of the audio attachment, downloading and caching it when needed. */
-private suspend fun resolveAudioFile(
-    context: Context,
-    audio: ResourceEntity,
-    client: OkHttpClient,
-    memosViewModel: MemosViewModel,
-): File? {
-    localFile(audio)?.let { return it }
-    val remote = audio.uri.toUri()
-    if (remote.scheme != "http" && remote.scheme != "https") return null
-    val downloaded = withContext(Dispatchers.IO) {
-        runCatching {
-            client.newCall(Request.Builder().url(audio.uri).get().build()).execute().use { response ->
-                if (!response.isSuccessful) return@use null
-                val dir = File(context.cacheDir, "image_cache").also { it.mkdirs() }
-                File.createTempFile("voice_", ".m4a", dir).also { target ->
-                    response.body.byteStream().use { input -> target.outputStream().use { input.copyTo(it) } }
-                }
-            }
-        }.onFailure { Timber.w(it) }.getOrNull()
-    } ?: return null
-    // Keep a canonical copy so the next open does not download again.
-    if (memosViewModel.cacheResourceFile(audio.identifier, downloaded.toUri()) is ApiResponse.Success) {
-        memosViewModel.getResourceById(audio.identifier)?.let(::localFile)?.let {
-            downloaded.delete()
-            return it
-        }
-    }
-    return downloaded
-}
-
-private fun localFile(resource: ResourceEntity): File? {
-    val uri = (resource.localUri ?: resource.uri).toUri()
-    if (uri.scheme != "file") return null
-    return uri.path?.let(::File)?.takeIf { it.exists() && it.length() > 0 }
 }
 
 private fun shareAudio(context: Context, file: File, audio: ResourceEntity) {

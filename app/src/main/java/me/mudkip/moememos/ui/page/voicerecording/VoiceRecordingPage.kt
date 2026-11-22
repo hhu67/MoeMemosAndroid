@@ -80,7 +80,8 @@ fun VoiceRecordingPage(
     val memosViewModel = LocalMemos.current
     var tab by rememberSaveable { mutableStateOf(RecorderTab.WAVEFORM) }
     var confirmDiscard by remember { mutableStateOf(false) }
-    val title = remember { formatVoiceTitle(context, viewModel.startedAt) }
+    val title = viewModel.existingMemoDate?.let { formatVoiceTitle(context, it) }
+        ?: remember { formatVoiceTitle(context, viewModel.startedAt) }
     RecorderSystemBars()
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -160,7 +161,7 @@ fun VoiceRecordingPage(
                     modifier = Modifier.align(Alignment.Center)
                 )
                 RecorderTab.TRANSCRIPT -> LiveTranscriptPane(
-                    text = viewModel.liveTranscript,
+                    text = viewModel.displayTranscript,
                     available = viewModel.transcriberAvailable
                 )
             }

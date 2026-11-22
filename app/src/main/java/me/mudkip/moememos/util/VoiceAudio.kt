@@ -5,7 +5,9 @@ import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.media.MediaMuxer
 import android.util.Base64
+import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -28,6 +30,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import timber.log.Timber
 import java.io.File
+import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.time.Instant
 import java.time.ZoneId
@@ -239,5 +242,122 @@ suspend fun transcribeAudioFile(file: File, account: Account?, httpClient: OkHtt
     } catch (e: Exception) {
         Timber.w(e, "Transcribe request failed")
         null
+    }
+}
+
+/** Returns the local file for a resource if present on disk. */
+fun localAudioFile(resource: ResourceEntity): File? {
+    val uri = (resource.localUri ?: resource.uri).toUri()
+    if (uri.scheme != "file") return null
+    return uri.path?.let(::File)?.takeIf { it.exists() && it.length() > 0 }
+}
+
+/** Resolves the local audio file for a resource, downloading and caching it if needed. */
+suspend fun resolveAudioFile(
+    context: Context,
+    audio: ResourceEntity,
+    client: OkHttpClient,
+    onCacheFile: (suspend (String, android.net.Uri) -> Unit)? = null
+): File? {
+    localAudioFile(audio)?.let { return it }
+    val remote = audio.uri.toUri()
+    if (remote.scheme != "http" && remote.scheme != "https") return null
+    val downloaded = withContext(Dispatchers.IO) {
+        runCatching {
+            client.newCall(Request.Builder().url(audio.uri).get().build()).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val dir = File(context.cacheDir, "image_cache").also { it.mkdirs() }
+                File.createTempFile("voice_", ".m4a", dir).also { target ->
+                    response.body.byteStream().use { input -> target.outputStream().use { input.copyTo(it) } }
+                }
+            }
+        }.onFailure { Timber.w(it) }.getOrNull()
+    } ?: return null
+    if (onCacheFile != null) {
+        runCatching { onCacheFile(audio.identifier, downloaded.toUri()) }
+    }
+    return downloaded
+}
+
+/**
+ * Merges two MPEG-4 AAC audio files into [outputFile] without re-encoding, preserving full audio quality.
+ * Returns true if successful.
+ */
+suspend fun mergeAudioFiles(file1: File, file2: File, outputFile: File): Boolean = withContext(Dispatchers.IO) {
+    if (!file1.exists() || file1.length() == 0L) {
+        return@withContext if (file2.exists() && file2.length() > 0L) {
+            file2.copyTo(outputFile, overwrite = true)
+            true
+        } else false
+    }
+    if (!file2.exists() || file2.length() == 0L) {
+        file1.copyTo(outputFile, overwrite = true)
+        return@withContext true
+    }
+
+    var muxer: MediaMuxer? = null
+    var extractor1: MediaExtractor? = null
+    var extractor2: MediaExtractor? = null
+    try {
+        extractor1 = MediaExtractor().apply { setDataSource(file1.path) }
+        val track1 = (0 until extractor1.trackCount).firstOrNull {
+            extractor1.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+        } ?: return@withContext false
+        val format1 = extractor1.getTrackFormat(track1)
+        extractor1.selectTrack(track1)
+
+        outputFile.parentFile?.mkdirs()
+        if (outputFile.exists()) outputFile.delete()
+        muxer = MediaMuxer(outputFile.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        val muxerTrack = muxer.addTrack(format1)
+        muxer.start()
+
+        val buffer = ByteBuffer.allocateDirect(256 * 1024)
+        val bufferInfo = MediaCodec.BufferInfo()
+
+        var lastPts1 = 0L
+        var prevPts1 = 0L
+
+        while (true) {
+            val sampleSize = extractor1.readSampleData(buffer, 0)
+            if (sampleSize < 0) break
+            val pts = extractor1.sampleTime
+            val flags = extractor1.sampleFlags
+            bufferInfo.set(0, sampleSize, pts, flags)
+            muxer.writeSampleData(muxerTrack, buffer, bufferInfo)
+            prevPts1 = lastPts1
+            lastPts1 = pts
+            extractor1.advance()
+        }
+
+        val frameDurationUs = if (lastPts1 > prevPts1 && prevPts1 > 0) (lastPts1 - prevPts1) else 23220L
+        val ptsOffset = lastPts1 + frameDurationUs
+
+        extractor2 = MediaExtractor().apply { setDataSource(file2.path) }
+        val track2 = (0 until extractor2.trackCount).firstOrNull {
+            extractor2.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+        } ?: return@withContext false
+        extractor2.selectTrack(track2)
+
+        while (true) {
+            val sampleSize = extractor2.readSampleData(buffer, 0)
+            if (sampleSize < 0) break
+            val pts = extractor2.sampleTime + ptsOffset
+            val flags = extractor2.sampleFlags
+            bufferInfo.set(0, sampleSize, pts, flags)
+            muxer.writeSampleData(muxerTrack, buffer, bufferInfo)
+            extractor2.advance()
+        }
+
+        true
+    } catch (e: Exception) {
+        Timber.e(e, "Failed to merge audio files")
+        outputFile.delete()
+        false
+    } finally {
+        runCatching { muxer?.stop() }
+        runCatching { muxer?.release() }
+        runCatching { extractor1?.release() }
+        runCatching { extractor2?.release() }
     }
 }

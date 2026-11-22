@@ -149,6 +149,7 @@
     <string name="voice_recording_title">%1$s at %2$s</string>
     <string name="pause">Pause</string>
     <string name="resume">Resume</string>
+    <string name="resume_recording">Resume recording</string>
     <string name="stop">Stop</string>
     <string name="listen">Play</string>
     <string name="speech">Speech</string>

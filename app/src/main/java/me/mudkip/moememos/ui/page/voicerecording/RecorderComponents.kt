@@ -36,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -79,6 +80,7 @@ object RecorderColors {
     val OnStopButton = Color(0xFF601410)
     val DarkButton = Color(0xFF262626)
     val RecordingDot = Color(0xFFE25555)
+    val RecordButton = Color(0xFFEA4335)
 }
 
 enum class RecorderTab { WAVEFORM, TRANSCRIPT }
@@ -197,7 +199,14 @@ fun LiveWaveform(
     var anchorRealtime by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
     var anchorElapsedMs by remember { mutableLongStateOf(elapsedMs) }
 
-    LaunchedEffect(elapsedMs) {
+    var lastIsRecording by remember { mutableStateOf(isRecording) }
+    if (lastIsRecording != isRecording) {
+        lastIsRecording = isRecording
+        anchorRealtime = SystemClock.elapsedRealtime()
+        anchorElapsedMs = elapsedMs
+    }
+
+    LaunchedEffect(elapsedMs, isRecording) {
         anchorRealtime = SystemClock.elapsedRealtime()
         anchorElapsedMs = elapsedMs
     }

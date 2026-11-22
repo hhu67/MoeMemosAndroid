@@ -16,8 +16,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import me.mudkip.moememos.MainActivity
 import me.mudkip.moememos.data.model.ShareContent
 import me.mudkip.moememos.ext.navigateToMemoEditor
@@ -125,7 +127,16 @@ fun Navigation() {
                     }
                 }
 
-                composable(RouteName.VOICE_RECORDING) {
+                composable(
+                    route = "${RouteName.VOICE_RECORDING}?resumeMemoId={resumeMemoId}",
+                    arguments = listOf(
+                        navArgument("resumeMemoId") {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        }
+                    )
+                ) {
                     VoiceRecordingPage(
                         onFinished = { savedMemoId ->
                             if (savedMemoId == null) {
@@ -133,7 +144,7 @@ fun Navigation() {
                             } else {
                                 // Replace the recorder with the saved memo's player.
                                 navController.navigate("${RouteName.MEMO_DETAIL}?memoId=${Uri.encode(savedMemoId)}") {
-                                    popUpTo(RouteName.VOICE_RECORDING) { inclusive = true }
+                                    popUpTo("${RouteName.VOICE_RECORDING}?resumeMemoId={resumeMemoId}") { inclusive = true }
                                 }
                             }
                         }

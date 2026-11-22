@@ -98,6 +98,7 @@
     <string name="voice_recording_title">%1$s в %2$s</string>
     <string name="pause">Пауза</string>
     <string name="resume">Продолжить</string>
+    <string name="resume_recording">Продолжить запись</string>
     <string name="stop">Стоп</string>
     <string name="listen">Прослушать</string>
     <string name="speech">Речь</string>
