@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -45,6 +46,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -268,7 +270,7 @@ fun DynamicVoiceRecordButton(
     )
 
     val animatedAmp by animateFloatAsState(
-        targetValue = if (isRecording) amplitude.coerceIn(0f, 1f) else 0f,
+        targetValue = if (isRecording && !isCancelActive) amplitude.coerceIn(0f, 1f) else 0f,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessLow
@@ -285,64 +287,70 @@ fun DynamicVoiceRecordButton(
         label = "buttonScale"
     )
 
-    val baseColor = if (isCancelActive) Color(0xFF4A4A4A) else RedBallColor
+    // Red = recording voice, Gray = not recording / cancel zone near left edge
+    val baseColor by animateColorAsState(
+        targetValue = if (isCancelActive) Color(0xFF616161) else RedBallColor,
+        animationSpec = tween(150),
+        label = "ballColor"
+    )
 
     Box(
         modifier = modifier.size(56.dp),
         contentAlignment = Alignment.Center
     ) {
-        androidx.compose.foundation.Canvas(modifier = Modifier.size(160.dp)) {
-            val cx = size.width / 2 + (dragOffsetX.coerceAtMost(0f) * 0.50f)
-            val cy = size.height / 2
-            val center = Offset(cx, cy)
+        Box(
+            modifier = Modifier.graphicsLayer {
+                translationX = dragOffsetX.coerceAtMost(0f)
+            },
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.size(160.dp)) {
+                val cx = size.width / 2
+                val cy = size.height / 2
+                val center = Offset(cx, cy)
 
-            if (isRecording) {
-                // 1. Outer dynamic pulsing layer (4 lobes expanding in specific directions)
-                val outerPath = Path()
-                val outerBaseR = 34.dp.toPx() * scale
-                val outerExtraR = 28.dp.toPx() * animatedAmp
-                val steps = 72
-                for (i in 0..steps) {
-                    val theta = (i * 2f * PI.toFloat()) / steps
-                    val lobe = 0.35f * sin(3f * theta + phase1) + 0.25f * cos(4f * theta - phase2)
-                    val r = outerBaseR + outerExtraR * (1f + lobe)
-                    val x = cx + r * cos(theta)
-                    val y = cy + r * sin(theta)
-                    if (i == 0) outerPath.moveTo(x, y) else outerPath.lineTo(x, y)
-                }
-                outerPath.close()
-                drawPath(outerPath, color = baseColor.copy(alpha = 0.20f))
+                if (isRecording && !isCancelActive) {
+                    // 1. Outer dynamic pulsing layer (4 lobes expanding in specific directions)
+                    val outerPath = Path()
+                    val outerBaseR = 34.dp.toPx() * scale
+                    val outerExtraR = 28.dp.toPx() * animatedAmp
+                    val steps = 72
+                    for (i in 0..steps) {
+                        val theta = (i * 2f * PI.toFloat()) / steps
+                        val lobe = 0.35f * sin(3f * theta + phase1) + 0.25f * cos(4f * theta - phase2)
+                        val r = outerBaseR + outerExtraR * (1f + lobe)
+                        val x = cx + r * cos(theta)
+                        val y = cy + r * sin(theta)
+                        if (i == 0) outerPath.moveTo(x, y) else outerPath.lineTo(x, y)
+                    }
+                    outerPath.close()
+                    drawPath(outerPath, color = baseColor.copy(alpha = 0.20f))
 
-                // 2. Middle dynamic pulsing layer (5 lobes)
-                val midPath = Path()
-                val midBaseR = 30.dp.toPx() * scale
-                val midExtraR = 18.dp.toPx() * animatedAmp
-                for (i in 0..steps) {
-                    val theta = (i * 2f * PI.toFloat()) / steps
-                    val lobe = 0.28f * sin(4f * theta - phase2) + 0.22f * cos(5f * theta + phase1)
-                    val r = midBaseR + midExtraR * (1f + lobe)
-                    val x = cx + r * cos(theta)
-                    val y = cy + r * sin(theta)
-                    if (i == 0) midPath.moveTo(x, y) else midPath.lineTo(x, y)
+                    // 2. Middle dynamic pulsing layer (5 lobes)
+                    val midPath = Path()
+                    val midBaseR = 30.dp.toPx() * scale
+                    val midExtraR = 18.dp.toPx() * animatedAmp
+                    for (i in 0..steps) {
+                        val theta = (i * 2f * PI.toFloat()) / steps
+                        val lobe = 0.28f * sin(4f * theta - phase2) + 0.22f * cos(5f * theta + phase1)
+                        val r = midBaseR + midExtraR * (1f + lobe)
+                        val x = cx + r * cos(theta)
+                        val y = cy + r * sin(theta)
+                        if (i == 0) midPath.moveTo(x, y) else midPath.lineTo(x, y)
+                    }
+                    midPath.close()
+                    drawPath(midPath, color = baseColor.copy(alpha = 0.38f))
                 }
-                midPath.close()
-                drawPath(midPath, color = baseColor.copy(alpha = 0.38f))
+
+                // 3. Core solid ball
+                val coreR = (28.dp.toPx() * scale) + (if (!isCancelActive) 6.dp.toPx() * animatedAmp else 0f)
+                drawCircle(
+                    color = baseColor,
+                    radius = coreR,
+                    center = center
+                )
             }
 
-            // 3. Core solid ball
-            val coreR = (28.dp.toPx() * scale) + (6.dp.toPx() * animatedAmp)
-            drawCircle(
-                color = baseColor,
-                radius = coreR,
-                center = center
-            )
-        }
-
-        // Center icon following drag offset
-        val iconOffsetPx = dragOffsetX.coerceAtMost(0f) * 0.50f
-        Box(
-            modifier = Modifier.padding(end = (-iconOffsetPx).coerceAtLeast(0f).dp)
-        ) {
             Icon(
                 imageVector = if (isCancelActive) Icons.Filled.Delete else Icons.Filled.Mic,
                 contentDescription = null,

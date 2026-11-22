@@ -58,12 +58,10 @@ import me.mudkip.moememos.R
 import me.mudkip.moememos.data.model.Account
 import me.mudkip.moememos.ext.string
 import me.mudkip.moememos.ui.component.SyncStatusBadge
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalDensity
 import me.mudkip.moememos.ui.page.common.LocalRootNavController
 import me.mudkip.moememos.ui.page.common.RouteName
 import me.mudkip.moememos.util.DynamicVoiceRecordButton
@@ -166,6 +164,15 @@ private fun MemosHomePageContent(
         },
 
         floatingActionButton = {
+            val density = LocalDensity.current
+            val cancelThresholdPx = with(density) { 110.dp.toPx() }
+            val maxDragPx = with(density) { 220.dp.toPx() }
+            val fabAlpha by animateFloatAsState(
+                targetValue = if (quickRecorder.isRecording) 0f else 1f,
+                animationSpec = tween(150),
+                label = "fabAlpha"
+            )
+
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -182,32 +189,35 @@ private fun MemosHomePageContent(
                             val downTime = SystemClock.elapsedRealtime()
                             val startX = down.position.x
                             var isHold = false
-                            var cancelTriggered = false
-                            val holdTimeout = 220L
+                            val holdTimeout = 130L
 
                             while (true) {
                                 val event = awaitPointerEvent(PointerEventPass.Main)
                                 val pressed = event.changes.filter { it.pressed }
                                 val now = SystemClock.elapsedRealtime()
 
-                                if (!isHold && now - downTime >= holdTimeout) {
-                                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                                        PackageManager.PERMISSION_GRANTED
-                                    ) {
-                                        isHold = true
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        dragOffsetX = 0f
-                                        isCancelActive = false
-                                        quickRecorder.start()
-                                    } else {
-                                        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                        break
+                                if (!isHold) {
+                                    val pointer = pressed.firstOrNull()
+                                    val movedLeft = pointer != null && (pointer.position.x - startX) < -15f
+                                    if (now - downTime >= holdTimeout || movedLeft) {
+                                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                                            PackageManager.PERMISSION_GRANTED
+                                        ) {
+                                            isHold = true
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            dragOffsetX = 0f
+                                            isCancelActive = false
+                                            quickRecorder.start()
+                                        } else {
+                                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                            break
+                                        }
                                     }
                                 }
 
                                 if (pressed.isEmpty()) {
                                     if (isHold) {
-                                        if (cancelTriggered) {
+                                        if (isCancelActive) {
                                             quickRecorder.cancel()
                                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         } else {
@@ -234,29 +244,29 @@ private fun MemosHomePageContent(
                                 if (isHold) {
                                     pointer.consume()
                                     val dx = pointer.position.x - startX
-                                    dragOffsetX = dx.coerceAtMost(0f)
-                                    cancelTriggered = dragOffsetX < -220f
-                                    isCancelActive = cancelTriggered
+                                    dragOffsetX = dx.coerceIn(-maxDragPx, 0f)
+                                    val shouldCancel = (-dragOffsetX) >= cancelThresholdPx
+                                    if (shouldCancel != isCancelActive) {
+                                        isCancelActive = shouldCancel
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
                                 }
                             }
                         }
                     }
                 )
 
-                AnimatedVisibility(
-                    visible = !quickRecorder.isRecording,
-                    enter = fadeIn(tween(150)) + expandHorizontally(),
-                    exit = fadeOut(tween(150)) + shrinkHorizontally()
-                ) {
-                    ExtendedFloatingActionButton(
-                        onClick = {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        if (!quickRecorder.isRecording) {
                             rootNavController.navigate(RouteName.INPUT)
-                        },
-                        expanded = expandedFab,
-                        text = { Text(R.string.new_memo.string) },
-                        icon = { Icon(Icons.Filled.Add, contentDescription = R.string.compose.string) }
-                    )
-                }
+                        }
+                    },
+                    expanded = expandedFab,
+                    text = { Text(R.string.new_memo.string) },
+                    icon = { Icon(Icons.Filled.Add, contentDescription = R.string.compose.string) },
+                    modifier = Modifier.alpha(fabAlpha)
+                )
             }
         },
 
