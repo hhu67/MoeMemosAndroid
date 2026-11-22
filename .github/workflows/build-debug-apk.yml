@@ -1,11 +1,16 @@
-name: Build Debug APK
+name: Build and Release Debug APK
 
 on:
   push:
     branches:
       - feat/voice-memo-recording
       - main
+    tags:
+      - "v*"
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -33,3 +38,46 @@ jobs:
           name: debug-apk-${{ github.sha }}
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 5
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          RELEASE_TAG="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_TYPE:-}" != "tag" ]]; then
+            RELEASE_TAG="v2.1.0-voice"
+          fi
+
+          APK_SRC="app/build/outputs/apk/debug/app-debug.apk"
+          APK_NAME="moememos-${RELEASE_TAG}.apk"
+          cp "$APK_SRC" "$APK_NAME"
+
+          cat << 'EOF' > release_notes.md
+          ## 🎙️ MoeMemos с голосовыми заметками
+
+          ### Основные возможности:
+          - **Интерфейс записи и просмотра в стиле Google Recorder:**
+            - Плавная запись и воспроизведение с динамической аудиоволной.
+            - Интерактивный squiggly-скруббер и перемотка жестом по волне без лагов и дерганий.
+            - Возможность продолжения (дозаписи) существующих голосовых заметок.
+          - **Быстрая запись по удержанию (Hold-to-record в стиле Telegram):**
+            - Мгновенный старт записи по зажатию кнопки микрофона на главном экране.
+            - Кнопка остаётся строго на своей позиции и превращается в динамический пульсирующий шарик, реагирующий на громкость речи.
+            - Свайп влево для отмены: шарик становится серым с иконкой корзины, запись не сохраняется.
+            - Отпускание в красной зоне сохраняет заметку.
+          - **Расшифровка речи:**
+            - Серверная транскрипция через Connect AI Service (OpenAI / Gemini) и живая транскрипция речи.
+          EOF
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "${RELEASE_TAG}: Voice Memo Recording" \
+              --notes-file release_notes.md
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "${RELEASE_TAG}: Voice Memo Recording" \
+              --notes-file release_notes.md
+          fi
+
+          gh release upload "$RELEASE_TAG" "$APK_NAME" --clobber
