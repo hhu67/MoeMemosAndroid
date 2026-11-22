@@ -118,6 +118,10 @@
     <string name="discard_recording">Удалить запись</string>
     <string name="discard_recording_title">Удалить эту запись?</string>
     <string name="discard_recording_message">Запись не будет сохранена.</string>
+    <string name="transcribe_recording">Расшифровать запись</string>
+    <string name="transcribe_dialog_title">Расшифровать запись?</string>
+    <string name="transcribe_dialog_message">Для расшифровки аудиозапись будет отправлена на сервер Memos.</string>
+    <string name="transcribe_action">Расшифровать</string>
 
     <string name="memos_widget_title">Заметки</string>
     <string name="memory_widget_title">Воспоминание</string>

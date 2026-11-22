@@ -155,6 +155,7 @@ fun VoiceRecordingPage(
             when (tab) {
                 RecorderTab.WAVEFORM -> LiveWaveform(
                     amplitudes = viewModel.amplitudes,
+                    isRecording = viewModel.phase == RecorderPhase.RECORDING,
                     modifier = Modifier.align(Alignment.Center)
                 )
                 RecorderTab.TRANSCRIPT -> LiveTranscriptPane(
@@ -194,19 +195,19 @@ fun VoiceRecordingPage(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(104.dp)
+                    .height(72.dp)
                     .padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 val paused = viewModel.phase == RecorderPhase.PAUSED
                 Button(
                     onClick = { if (paused) viewModel.resume() else viewModel.pause() },
                     enabled = recording,
                     modifier = Modifier.weight(1f).fillMaxSize(),
-                    shape = CircleShape,
+                    shape = RoundedCornerShape(36.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = RecorderColors.LightButton,
-                        contentColor = RecorderColors.OnLightButton
+                        containerColor = RecorderColors.DarkButton,
+                        contentColor = RecorderColors.OnBackground
                     )
                 ) {
                     if (paused) {
@@ -217,7 +218,7 @@ fun VoiceRecordingPage(
                     Spacer(Modifier.width(10.dp))
                     Text(
                         if (paused) R.string.resume.string else R.string.pause.string,
-                        fontSize = 20.sp,
+                        fontSize = 18.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -226,7 +227,7 @@ fun VoiceRecordingPage(
                     onClick = { viewModel.stopAndSave() },
                     enabled = recording,
                     modifier = Modifier.weight(1f).fillMaxSize(),
-                    shape = CircleShape,
+                    shape = RoundedCornerShape(36.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = RecorderColors.StopButton,
                         contentColor = RecorderColors.OnStopButton
@@ -234,7 +235,7 @@ fun VoiceRecordingPage(
                 ) {
                     Icon(Icons.Filled.Stop, null, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(10.dp))
-                    Text(R.string.stop.string, fontSize = 20.sp, maxLines = 1)
+                    Text(R.string.stop.string, fontSize = 18.sp, maxLines = 1)
                 }
             }
         }

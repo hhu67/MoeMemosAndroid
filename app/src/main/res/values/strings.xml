@@ -169,6 +169,10 @@
     <string name="discard_recording">Delete recording</string>
     <string name="discard_recording_title">Delete this recording?</string>
     <string name="discard_recording_message">The recording will not be saved.</string>
+    <string name="transcribe_recording">Transcribe recording</string>
+    <string name="transcribe_dialog_title">Transcribe recording?</string>
+    <string name="transcribe_dialog_message">The audio will be sent to your Memos server for transcription.</string>
+    <string name="transcribe_action">Transcribe</string>
 
     <!-- Widget strings -->
     <string name="memos_widget_title">Memos</string>

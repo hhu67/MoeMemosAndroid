@@ -1,26 +1,46 @@
 package me.mudkip.moememos.util
 
 import android.content.Context
+import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import me.mudkip.moememos.R
 import me.mudkip.moememos.data.local.entity.MemoEntity
 import me.mudkip.moememos.data.local.entity.ResourceEntity
+import me.mudkip.moememos.data.model.Account
 import me.mudkip.moememos.ext.string
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import timber.log.Timber
 import java.io.File
 import java.nio.ByteOrder
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.log10
 
 /** Quietest level that still draws a bar; anything below is shown as a silence dot. */
 private const val SILENCE_FLOOR_DB = -45.0
+
+/** Server transcription is limited to 25 MiB of audio. */
+const val MAX_TRANSCRIBE_BYTES = 25L * 1024 * 1024
 
 /**
  * Maps a 16-bit peak (0..32767) to 0..1 on a decibel scale, so the bar height follows how
@@ -52,6 +72,11 @@ suspend fun extractWaveform(file: File, samplesPerSecond: Int = 20): List<Float>
         decoder.start()
 
         var window = sliceSize(format, samplesPerSecond)
+        var pcmEncoding = if (format.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+            format.getInteger(MediaFormat.KEY_PCM_ENCODING)
+        } else {
+            AudioFormat.ENCODING_PCM_16BIT
+        }
         var count = 0
         var peak = 0
         val result = ArrayList<Float>()
@@ -76,19 +101,36 @@ suspend fun extractWaveform(file: File, samplesPerSecond: Int = 20): List<Float>
             }
             val outIndex = decoder.dequeueOutputBuffer(info, 10_000)
             if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                window = sliceSize(decoder.outputFormat, samplesPerSecond)
+                val outFormat = decoder.outputFormat
+                window = sliceSize(outFormat, samplesPerSecond)
+                if (outFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+                    pcmEncoding = outFormat.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                }
             } else if (outIndex >= 0) {
                 val buffer = decoder.getOutputBuffer(outIndex)!!
                 buffer.position(info.offset)
                 buffer.limit(info.offset + info.size)
-                val samples = buffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-                while (samples.hasRemaining()) {
-                    val value = abs(samples.get().toInt())
-                    if (value > peak) peak = value
-                    if (++count >= window) {
-                        result.add(normalizeAmplitude(peak))
-                        peak = 0
-                        count = 0
+                if (pcmEncoding == AudioFormat.ENCODING_PCM_FLOAT) {
+                    val samples = buffer.order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
+                    while (samples.hasRemaining()) {
+                        val value = (abs(samples.get()) * 32767).toInt()
+                        if (value > peak) peak = value
+                        if (++count >= window) {
+                            result.add(normalizeAmplitude(peak))
+                            peak = 0
+                            count = 0
+                        }
+                    }
+                } else {
+                    val samples = buffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                    while (samples.hasRemaining()) {
+                        val value = abs(samples.get().toInt())
+                        if (value > peak) peak = value
+                        if (++count >= window) {
+                            result.add(normalizeAmplitude(peak))
+                            peak = 0
+                            count = 0
+                        }
                     }
                 }
                 decoder.releaseOutputBuffer(outIndex, false)
@@ -156,5 +198,46 @@ fun formatClock(ms: Long): String {
         "%d:%02d:%02d".format(hours, minutes, seconds)
     } else {
         "%02d:%02d".format(minutes, seconds)
+    }
+}
+
+/**
+ * Calls `memos.api.AIService/Transcribe` (Connect protocol, JSON). Returns the text, or null
+ * when the server has no transcription configured, rejects the request, or is unreachable.
+ */
+suspend fun transcribeAudioFile(file: File, account: Account?, httpClient: OkHttpClient): String? = withContext(Dispatchers.IO) {
+    val memosV1 = account as? Account.MemosV1 ?: return@withContext null
+    if (file.length() > MAX_TRANSCRIBE_BYTES) return@withContext null
+    val base = memosV1.info.host.trimEnd('/').toHttpUrlOrNull() ?: return@withContext null
+    val url = base.newBuilder().addPathSegments("memos.api.AIService/Transcribe").build()
+    val body = buildJsonObject {
+        putJsonObject("audio") {
+            put("content", Base64.encodeToString(file.readBytes(), Base64.NO_WRAP))
+            put("filename", file.name)
+            put("contentType", "audio/mp4")
+        }
+    }.toString().toRequestBody("application/json".toMediaType())
+    val request = Request.Builder()
+        .url(url)
+        .post(body)
+        .header("connect-protocol-version", "1")
+        .header("Accept", "application/json")
+        .build()
+    val client = httpClient.newBuilder()
+        .readTimeout(3, TimeUnit.MINUTES)
+        .callTimeout(4, TimeUnit.MINUTES)
+        .build()
+    try {
+        client.newCall(request).execute().use { response ->
+            val text = response.body.string()
+            if (!response.isSuccessful) {
+                Timber.w("Transcribe failed: %d %s", response.code, text.take(300))
+                return@withContext null
+            }
+            Json.parseToJsonElement(text).jsonObject["text"]?.jsonPrimitive?.contentOrNull?.trim()
+        }
+    } catch (e: Exception) {
+        Timber.w(e, "Transcribe request failed")
+        null
     }
 }

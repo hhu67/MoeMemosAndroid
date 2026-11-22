@@ -38,6 +38,7 @@ import me.mudkip.moememos.ext.string
 import me.mudkip.moememos.util.LiveTranscriber
 import me.mudkip.moememos.util.VoiceMemoFormat
 import me.mudkip.moememos.util.normalizeAmplitude
+import me.mudkip.moememos.util.transcribeAudioFile
 import me.mudkip.moememos.widget.WidgetUpdater
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -52,9 +53,6 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 enum class RecorderPhase { IDLE, RECORDING, PAUSED, SAVING, DONE }
-
-/** Server transcription is limited to 25 MiB of audio. */
-private const val MAX_TRANSCRIBE_BYTES = 25L * 1024 * 1024
 
 @HiltViewModel
 class VoiceRecordingViewModel @Inject constructor(
@@ -220,47 +218,8 @@ class VoiceRecordingViewModel @Inject constructor(
         return runCatching { MemoVisibility.valueOf(info.defaultVisibility) }.getOrDefault(MemoVisibility.PRIVATE)
     }
 
-    /**
-     * Calls `memos.api.AIService/Transcribe` (Connect protocol, JSON). Returns the text, or null
-     * when the server has no transcription configured, rejects the request, or is unreachable.
-     */
-    private suspend fun transcribeOnServer(file: File): String? = withContext(Dispatchers.IO) {
-        val account = accountService.currentAccount.first() as? Account.MemosV1 ?: return@withContext null
-        if (file.length() > MAX_TRANSCRIBE_BYTES) return@withContext null
-        val base = account.info.host.trimEnd('/').toHttpUrlOrNull() ?: return@withContext null
-        val url = base.newBuilder().addPathSegments("memos.api.AIService/Transcribe").build()
-        val body = buildJsonObject {
-            putJsonObject("audio") {
-                put("content", Base64.encodeToString(file.readBytes(), Base64.NO_WRAP))
-                put("filename", file.name)
-                put("contentType", "audio/mp4")
-            }
-        }.toString().toRequestBody("application/json".toMediaType())
-        val request = Request.Builder()
-            .url(url)
-            .post(body)
-            .header("connect-protocol-version", "1")
-            .header("Accept", "application/json")
-            .build()
-        // The account client already adds "Authorization: Bearer <token>" for this host.
-        val client = accountService.httpClient.newBuilder()
-            .readTimeout(3, TimeUnit.MINUTES)
-            .callTimeout(4, TimeUnit.MINUTES)
-            .build()
-        try {
-            client.newCall(request).execute().use { response ->
-                val text = response.body.string()
-                if (!response.isSuccessful) {
-                    Timber.w("Transcribe failed: %d %s", response.code, text.take(300))
-                    return@withContext null
-                }
-                Json.parseToJsonElement(text).jsonObject["text"]?.jsonPrimitive?.contentOrNull?.trim()
-            }
-        } catch (e: Exception) {
-            Timber.w(e, "Transcribe request failed")
-            null
-        }
-    }
+    private suspend fun transcribeOnServer(file: File): String? =
+        transcribeAudioFile(file, accountService.currentAccount.first(), accountService.httpClient)
 
     private fun startTicker() {
         tickerJob?.cancel()

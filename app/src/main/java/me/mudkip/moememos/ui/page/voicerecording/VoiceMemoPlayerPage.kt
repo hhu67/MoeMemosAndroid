@@ -4,14 +4,15 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
+import android.os.SystemClock
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,11 +22,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -40,33 +43,32 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import com.skydoves.sandwich.ApiResponse
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -81,6 +83,7 @@ import me.mudkip.moememos.util.VoiceMemoFormat
 import me.mudkip.moememos.util.extractWaveform
 import me.mudkip.moememos.util.formatClock
 import me.mudkip.moememos.util.formatVoiceTitle
+import me.mudkip.moememos.util.transcribeAudioFile
 import me.mudkip.moememos.viewmodel.LocalMemos
 import me.mudkip.moememos.viewmodel.LocalUserState
 import me.mudkip.moememos.viewmodel.MemosViewModel
@@ -88,6 +91,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
 import java.io.File
+import kotlin.math.abs
 
 private const val REWIND_MS = 5_000
 private const val FORWARD_MS = 10_000
@@ -112,7 +116,19 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
     var scrubbing by remember { mutableStateOf<Float?>(null) }
     var menuExpanded by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var showTranscribeDialog by remember { mutableStateOf(false) }
+    var isTranscribing by remember { mutableStateOf(false) }
+
+    var playbackAnchorRealtime by remember { mutableLongStateOf(0L) }
+    var playbackAnchorPositionMs by remember { mutableLongStateOf(0L) }
+
     RecorderSystemBars()
+
+    fun updatePlaybackAnchor(pos: Long) {
+        playbackAnchorRealtime = SystemClock.elapsedRealtime()
+        playbackAnchorPositionMs = pos
+        positionMs = pos
+    }
 
     LaunchedEffect(audio.identifier) {
         val resolved = resolveAudioFile(context, audio, userStateViewModel.okHttpClient, memosViewModel)
@@ -133,6 +149,7 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
                     setOnCompletionListener { mp ->
                         playing = false
                         positionMs = mp.duration.toLong()
+                        updatePlaybackAnchor(positionMs)
                     }
                 }
             }.onFailure { e -> Timber.w(e); loadFailed = true }.getOrNull()
@@ -146,17 +163,36 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
         }
     }
 
+    // High refresh rate smooth position updates locked to display frames
     LaunchedEffect(playing) {
+        if (!playing) return@LaunchedEffect
+        updatePlaybackAnchor(positionMs)
         while (playing && isActive) {
-            player?.let { positionMs = it.currentPosition.toLong() }
-            delay(33)
+            withFrameNanos { _ ->
+                if (scrubbing == null) {
+                    val elapsed = SystemClock.elapsedRealtime() - playbackAnchorRealtime
+                    val est = (playbackAnchorPositionMs + elapsed).coerceIn(0L, durationMs)
+                    positionMs = est
+
+                    // Sync check against MediaPlayer to correct any drift
+                    val actual = player?.currentPosition?.toLong() ?: est
+                    if (abs(actual - est) > 150) {
+                        playbackAnchorPositionMs = actual
+                        playbackAnchorRealtime = SystemClock.elapsedRealtime()
+                        positionMs = actual
+                    }
+                    if (durationMs > 0 && est >= durationMs) {
+                        playing = false
+                    }
+                }
+            }
         }
     }
 
     fun seekTo(ms: Long) {
         val target = ms.coerceIn(0, durationMs)
         player?.seekTo(target.toInt())
-        positionMs = target
+        updatePlaybackAnchor(target)
     }
 
     fun togglePlay() {
@@ -164,10 +200,29 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
         if (playing) {
             mp.pause()
             playing = false
+            updatePlaybackAnchor(positionMs)
         } else {
             if (positionMs >= durationMs) seekTo(0)
             mp.start()
+            updatePlaybackAnchor(positionMs)
             playing = true
+        }
+    }
+
+    fun startTranscription() {
+        val targetFile = file ?: return
+        if (isTranscribing) return
+        isTranscribing = true
+        scope.launch {
+            val account = userStateViewModel.currentAccount.value
+            val text = transcribeAudioFile(targetFile, account, userStateViewModel.okHttpClient)
+            if (text != null && text.isNotBlank()) {
+                memosViewModel.editMemo(memo.identifier, text, memo.resources, memo.visibility)
+                tab = RecorderTab.TRANSCRIPT
+            } else {
+                Toast.makeText(context, R.string.transcription_failed_saved.string, Toast.LENGTH_LONG).show()
+            }
+            isTranscribing = false
         }
     }
 
@@ -215,6 +270,14 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
                 }
                 DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                     DropdownMenuItem(
+                        text = { Text(if (transcript == null) R.string.transcribe_recording.string else R.string.transcribe_action.string) },
+                        enabled = file != null && !isTranscribing,
+                        onClick = {
+                            menuExpanded = false
+                            showTranscribeDialog = true
+                        }
+                    )
+                    DropdownMenuItem(
                         text = { Text(R.string.share.string) },
                         enabled = file != null,
                         onClick = {
@@ -242,7 +305,11 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
 
         RecorderCard(modifier = Modifier.weight(1f)) {
             when {
-                tab == RecorderTab.TRANSCRIPT -> TranscriptPane(transcript)
+                tab == RecorderTab.TRANSCRIPT -> TranscriptPane(
+                    transcript = transcript,
+                    isTranscribing = isTranscribing,
+                    onTranscribeClick = { showTranscribeDialog = true }
+                )
                 loadFailed -> TranscriptHint(R.string.voice_memo_audio_unavailable.string)
                 file == null -> CircularProgressIndicator(
                     color = RecorderColors.OnBackground,
@@ -251,6 +318,15 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
                 else -> PlaybackWaveform(
                     amplitudes = waveform,
                     progress = progress,
+                    durationMs = durationMs,
+                    onSeek = { seekTo(it) },
+                    onScrubbing = { isScrubbing ->
+                        if (isScrubbing) {
+                            scrubbing = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f
+                        } else {
+                            scrubbing = null
+                        }
+                    },
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
@@ -259,37 +335,36 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
         Spacer(Modifier.height(20.dp))
         RecorderTabSwitch(
             selected = tab,
-            onSelect = { tab = it },
+            onSelect = { selectedTab ->
+                tab = selectedTab
+                if (selectedTab == RecorderTab.TRANSCRIPT && transcript == null && !isTranscribing && file != null) {
+                    showTranscribeDialog = true
+                }
+            },
             modifier = Modifier.align(Alignment.CenterHorizontally)
         )
         Spacer(Modifier.height(12.dp))
 
-        // Scrubber with elapsed and remaining time.
-        Slider(
+        // Modern Google Recorder squiggly slider
+        SquigglySlider(
             value = progress,
             onValueChange = { scrubbing = it },
             onValueChangeFinished = {
                 scrubbing?.let { seekTo((it * durationMs).toLong()) }
                 scrubbing = null
             },
+            isPlaying = playing,
             enabled = player != null && durationMs > 0,
-            colors = SliderDefaults.colors(
-                thumbColor = RecorderColors.Bar,
-                activeTrackColor = RecorderColors.Bar,
-                inactiveTrackColor = RecorderColors.Pill,
-                disabledThumbColor = RecorderColors.Muted,
-                disabledInactiveTrackColor = RecorderColors.Pill
-            ),
-            modifier = Modifier.padding(horizontal = 12.dp)
+            modifier = Modifier.padding(horizontal = 8.dp)
         )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
+                .padding(horizontal = 24.dp)
         ) {
             Text(formatClock(shownPosition), color = RecorderColors.OnBackground, fontSize = 14.sp)
             Spacer(Modifier.weight(1f))
-            Text("-" + formatClock(durationMs - shownPosition), color = RecorderColors.OnBackground, fontSize = 14.sp)
+            Text("-" + formatClock((durationMs - shownPosition).coerceAtLeast(0)), color = RecorderColors.Muted, fontSize = 14.sp)
         }
         Spacer(Modifier.height(16.dp))
 
@@ -297,9 +372,9 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(104.dp)
-                .padding(bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                .height(84.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             RoundControl(
@@ -307,32 +382,54 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
                 enabled = player != null,
                 label = R.string.rewind_5.string
             ) { Icon(Icons.Filled.Replay5, null, tint = RecorderColors.OnBackground, modifier = Modifier.size(28.dp)) }
+
             Button(
                 onClick = ::togglePlay,
                 enabled = player != null,
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-                shape = CircleShape,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(68.dp),
+                shape = RoundedCornerShape(34.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = RecorderColors.LightButton,
                     contentColor = RecorderColors.OnLightButton,
                     disabledContainerColor = RecorderColors.Pill
                 )
             ) {
-                Icon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, null, modifier = Modifier.size(24.dp))
+                Icon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, null, modifier = Modifier.size(26.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
                     if (playing) R.string.pause.string else R.string.listen.string,
-                    fontSize = 22.sp,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
+
             RoundControl(
                 onClick = { seekTo(positionMs + FORWARD_MS) },
                 enabled = player != null,
                 label = R.string.forward_10.string
             ) { Icon(Icons.Filled.Forward10, null, tint = RecorderColors.OnBackground, modifier = Modifier.size(28.dp)) }
         }
+    }
+
+    if (showTranscribeDialog) {
+        AlertDialog(
+            onDismissRequest = { showTranscribeDialog = false },
+            title = { Text(R.string.transcribe_dialog_title.string) },
+            text = { Text(R.string.transcribe_dialog_message.string) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showTranscribeDialog = false
+                    startTranscription()
+                }) { Text(R.string.transcribe_action.string) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTranscribeDialog = false }) { Text(R.string.cancel.string) }
+            }
+        )
     }
 
     if (confirmDelete) {
@@ -358,41 +455,81 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
 }
 
 @Composable
-private fun TranscriptPane(transcript: String?) {
-    if (transcript == null) {
-        TranscriptHint(R.string.no_transcript.string)
-        return
-    }
-    SelectionContainer {
-        Text(
-            transcript,
-            color = RecorderColors.OnBackground,
-            fontSize = 22.sp,
-            lineHeight = 32.sp,
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp)
-        )
+private fun TranscriptPane(
+    transcript: String?,
+    isTranscribing: Boolean,
+    onTranscribeClick: () -> Unit
+) {
+    when {
+        isTranscribing -> {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                CircularProgressIndicator(color = RecorderColors.OnBackground)
+                Spacer(Modifier.height(16.dp))
+                Text(R.string.transcribing.string, color = RecorderColors.OnBackground, fontSize = 16.sp)
+            }
+        }
+        transcript != null -> {
+            SelectionContainer {
+                Text(
+                    transcript,
+                    color = RecorderColors.OnBackground,
+                    fontSize = 22.sp,
+                    lineHeight = 32.sp,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 24.dp)
+                )
+            }
+        }
+        else -> {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    R.string.no_transcript.string,
+                    color = RecorderColors.Muted,
+                    fontSize = 16.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                Spacer(Modifier.height(20.dp))
+                Button(
+                    onClick = onTranscribeClick,
+                    shape = RoundedCornerShape(24.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = RecorderColors.DarkButton,
+                        contentColor = RecorderColors.OnBackground
+                    )
+                ) {
+                    Icon(Icons.Filled.GraphicEq, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(R.string.transcribe_recording.string, fontSize = 15.sp)
+                }
+            }
+        }
     }
 }
 
 @Composable
 private fun RoundControl(onClick: () -> Unit, enabled: Boolean, label: String, icon: @Composable () -> Unit) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
+    Box(
         modifier = Modifier
-            .width(84.dp)
-            .fillMaxHeight(),
-        shape = CircleShape,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = RecorderColors.DarkButton,
-            disabledContainerColor = RecorderColors.DarkButton
-        )
+            .size(68.dp)
+            .clip(CircleShape)
+            .background(RecorderColors.DarkButton)
+            .clickable(enabled = enabled, onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center
     ) {
-        Box(modifier = Modifier.semantics { contentDescription = label }) { icon() }
+        icon()
     }
 }
 

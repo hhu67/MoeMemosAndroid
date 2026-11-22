@@ -1,8 +1,17 @@
 package me.mudkip.moememos.ui.page.voicerecording
 
+import android.os.SystemClock
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -22,15 +31,25 @@ import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -39,25 +58,27 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.mudkip.moememos.R
 import me.mudkip.moememos.ext.string
-import kotlin.math.floor
+import kotlin.math.PI
+import kotlin.math.sin
 
 /** Colors of the recorder screens. They follow the dark Google Recorder look in both themes. */
 object RecorderColors {
     val Background = Color(0xFF131313)
-    val Card = Color(0xFF242424)
-    val Pill = Color(0xFF353535)
+    val Card = Color(0xFF1E1E1E)
+    val Pill = Color(0xFF2E2E2E)
     val PillSelected = Color(0xFFC6C6C6)
     val Bar = Color(0xFFFFFFFF)
     val BarPlayed = Color(0xFFFFFFFF)
-    val BarUpcoming = Color(0xFFBDBDBD)
+    val BarUpcoming = Color(0xFF757575)
+    val TrackInactive = Color(0xFF424242)
     val OnBackground = Color(0xFFE6E1E5)
     val Muted = Color(0xFF9E9E9E)
     val LightButton = Color(0xFFFFFFFF)
     val OnLightButton = Color(0xFF1C1B1F)
     val StopButton = Color(0xFFF2B8B5)
     val OnStopButton = Color(0xFF601410)
-    val DarkButton = Color(0xFF2B2B2B)
-    val RecordingDot = Color(0xFFF2B8B5)
+    val DarkButton = Color(0xFF262626)
+    val RecordingDot = Color(0xFFE25555)
 }
 
 enum class RecorderTab { WAVEFORM, TRANSCRIPT }
@@ -158,28 +179,73 @@ private fun TabSegment(
     }
 }
 
-private val BarWidth = 4.dp
-private val BarGap = 5.dp
-private val DotSize = 4.dp
+private val BarWidth = 3.5.dp
+private val BarGap = 4.5.dp
+private val DotSize = 3.5.dp
 
 /**
- * Live recording waveform. The newest sample is at the right edge and older ones scroll left.
- * Each bar's height is the loudness of that slice; near-silence is drawn as a dot.
+ * Live recording waveform. The newest sample is near the right edge and scrolls smoothly left.
+ * Continuous silence dots baseline spans across the card with liquid 60/120fps motion.
  */
 @Composable
-fun LiveWaveform(amplitudes: List<Float>, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier.fillMaxWidth().height(220.dp)) {
+fun LiveWaveform(
+    amplitudes: List<Float>,
+    isRecording: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+    var lastSampleTime by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(amplitudes.size) {
+        lastSampleTime = SystemClock.elapsedRealtime()
+    }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "live_smooth")
+    val ticker by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "ticker"
+    )
+
+    Canvas(modifier = modifier.fillMaxWidth().height(240.dp)) {
+        // Ticker read forces Compose to redraw on every frame
+        @Suppress("UNUSED_VARIABLE")
+        val unused = ticker
+
         val step = (BarWidth + BarGap).toPx()
         val barWidth = BarWidth.toPx()
-        val maxBar = size.height * 0.9f
+        val maxBar = size.height * 0.75f
         val centerY = size.height / 2
-        val visible = floor(size.width / step).toInt()
-        val start = (amplitudes.size - visible).coerceAtLeast(0)
-        // Right-align so a new sample appears at the edge and pushes the others left.
-        var x = size.width - (amplitudes.size - start) * step + step / 2
-        for (i in start until amplitudes.size) {
-            drawBar(x, centerY, amplitudes[i], maxBar, barWidth, RecorderColors.Bar)
-            x += step
+
+        // Smooth pixel-by-pixel shift between discrete sample updates
+        val now = SystemClock.elapsedRealtime()
+        val subSample = if (isRecording) {
+            ((now - lastSampleTime).toFloat() / 50f).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+        val smoothShift = subSample * step
+
+        val rightEdgeX = size.width - 24.dp.toPx() - smoothShift
+
+        // 1. Draw silence dots baseline across the screen
+        var baseDotX = (rightEdgeX % step + step) % step
+        while (baseDotX < size.width) {
+            drawCircle(RecorderColors.BarUpcoming, radius = DotSize.toPx() / 2, center = Offset(baseDotX, centerY))
+            baseDotX += step
+        }
+
+        // 2. Draw audio bars from right to left
+        val lastIdx = amplitudes.lastIndex
+        if (lastIdx >= 0) {
+            for (i in lastIdx downTo 0) {
+                val x = rightEdgeX - (lastIdx - i) * step
+                if (x < -step) break
+                val amp = amplitudes[i]
+                drawBar(x, centerY, amp, maxBar, barWidth, RecorderColors.Bar)
+            }
         }
     }
 }
@@ -187,33 +253,225 @@ fun LiveWaveform(amplitudes: List<Float>, modifier: Modifier = Modifier) {
 /**
  * Playback waveform: the whole recording, with a fixed playhead in the middle and the waveform
  * scrolling under it. Bars left of the playhead (already played) are brighter.
+ * Direct horizontal drag gestures allow scrolling / rewinding smoothly across time.
  */
 @Composable
-fun PlaybackWaveform(amplitudes: List<Float>, progress: Float, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier.fillMaxWidth().height(260.dp)) {
-        val step = (BarWidth + BarGap).toPx()
-        val barWidth = BarWidth.toPx()
-        val maxBar = size.height * 0.62f
+fun PlaybackWaveform(
+    amplitudes: List<Float>,
+    progress: Float,
+    durationMs: Long,
+    onSeek: (Long) -> Unit,
+    onScrubbing: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val step = BarWidth + BarGap
+    val barWidth = BarWidth
+
+    var accumulatedDeltaMs by remember { mutableFloatStateOf(0f) }
+
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(260.dp)
+            .pointerInput(amplitudes, durationMs) {
+                detectHorizontalDragGestures(
+                    onDragStart = {
+                        onScrubbing(true)
+                        accumulatedDeltaMs = progress * durationMs
+                    },
+                    onDragEnd = {
+                        onScrubbing(false)
+                    },
+                    onDragCancel = {
+                        onScrubbing(false)
+                    },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        if (durationMs > 0 && amplitudes.isNotEmpty()) {
+                            val stepPx = step.toPx()
+                            val sliceMs = durationMs.toFloat() / amplitudes.size
+                            val pxPerMs = stepPx / sliceMs
+                            accumulatedDeltaMs = (accumulatedDeltaMs - dragAmount / pxPerMs)
+                                .coerceIn(0f, durationMs.toFloat())
+                            onSeek(accumulatedDeltaMs.toLong())
+                        }
+                    }
+                )
+            }
+    ) {
+        val stepPx = step.toPx()
+        val barWidthPx = barWidth.toPx()
+        val maxBar = size.height * 0.70f
         val centerY = size.height / 2
-        val playheadX = size.width * 0.45f
-        val offset = progress.coerceIn(0f, 1f) * amplitudes.size * step
-        amplitudes.forEachIndexed { index, value ->
-            val x = playheadX + index * step + step / 2 - offset
-            if (x < -step || x > size.width + step) return@forEachIndexed
-            val color = if (x < playheadX) RecorderColors.BarPlayed else RecorderColors.BarUpcoming
-            drawBar(x, centerY, value, maxBar, barWidth, color)
+        val playheadX = size.width * 0.5f
+
+        val totalSamples = amplitudes.size
+        val currentMs = progress.coerceIn(0f, 1f) * durationMs
+        val sliceMs = if (totalSamples > 0 && durationMs > 0) durationMs.toFloat() / totalSamples else 50f
+        val pxPerMs = stepPx / sliceMs
+
+        if (totalSamples == 0) {
+            var dotX = 16.dp.toPx()
+            while (dotX < size.width - 16.dp.toPx()) {
+                drawCircle(RecorderColors.BarUpcoming, radius = DotSize.toPx() / 2, center = Offset(dotX, centerY))
+                dotX += stepPx
+            }
+        } else {
+            for (i in 0 until totalSamples) {
+                val sampleMs = i * sliceMs
+                val x = playheadX + (sampleMs - currentMs) * pxPerMs
+                if (x < -stepPx || x > size.width + stepPx) continue
+                val isPlayed = x <= playheadX
+                val color = if (isPlayed) RecorderColors.BarPlayed else RecorderColors.BarUpcoming
+                drawBar(x, centerY, amplitudes[i], maxBar, barWidthPx, color)
+            }
         }
+
+        // Draw fixed center playhead cursor
         drawLine(
             color = RecorderColors.Bar,
-            start = Offset(playheadX, size.height * 0.05f),
-            end = Offset(playheadX, size.height * 0.95f),
+            start = Offset(playheadX, size.height * 0.08f),
+            end = Offset(playheadX, size.height * 0.92f),
             strokeWidth = 3.dp.toPx(),
             cap = StrokeCap.Round
         )
     }
 }
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBar(
+/**
+ * Modern Google Recorder / Material 3 squiggly slider.
+ * Shows an animated sine wave on the played portion during playback and a vertical tick thumb.
+ */
+@Composable
+fun SquigglySlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
+    isPlaying: Boolean,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "squiggly")
+    val wavePhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2f * PI).toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "wavePhase"
+    )
+
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                detectTapGestures(
+                    onPress = { offset ->
+                        val pad = 16.dp.toPx()
+                        val trackW = (size.width - 2 * pad).coerceAtLeast(1f)
+                        val progress = ((offset.x - pad) / trackW).coerceIn(0f, 1f)
+                        onValueChange(progress)
+                        val released = tryAwaitRelease()
+                        if (released) {
+                            onValueChangeFinished()
+                        }
+                    }
+                )
+            }
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                detectHorizontalDragGestures(
+                    onDragStart = { offset ->
+                        val pad = 16.dp.toPx()
+                        val trackW = (size.width - 2 * pad).coerceAtLeast(1f)
+                        val progress = ((offset.x - pad) / trackW).coerceIn(0f, 1f)
+                        onValueChange(progress)
+                    },
+                    onDragEnd = { onValueChangeFinished() },
+                    onDragCancel = { onValueChangeFinished() },
+                    onHorizontalDrag = { change, _ ->
+                        change.consume()
+                        val pad = 16.dp.toPx()
+                        val trackW = (size.width - 2 * pad).coerceAtLeast(1f)
+                        val progress = ((change.position.x - pad) / trackW).coerceIn(0f, 1f)
+                        onValueChange(progress)
+                    }
+                )
+            }
+    ) {
+        val pad = 16.dp.toPx()
+        val trackStart = pad
+        val trackEnd = size.width - pad
+        val trackW = trackEnd - trackStart
+        val centerY = size.height / 2
+        val thumbX = (trackStart + value.coerceIn(0f, 1f) * trackW).coerceIn(trackStart, trackEnd)
+
+        val trackStrokePx = 3.dp.toPx()
+        val thumbHalfHPx = 9.dp.toPx()
+
+        // 1. Inactive track (ahead of thumb)
+        if (thumbX < trackEnd) {
+            drawLine(
+                color = RecorderColors.TrackInactive,
+                start = Offset(thumbX, centerY),
+                end = Offset(trackEnd, centerY),
+                strokeWidth = trackStrokePx,
+                cap = StrokeCap.Round
+            )
+        }
+
+        // 2. Active track (behind thumb)
+        if (thumbX > trackStart) {
+            if (!isPlaying) {
+                drawLine(
+                    color = RecorderColors.BarPlayed,
+                    start = Offset(trackStart, centerY),
+                    end = Offset(thumbX, centerY),
+                    strokeWidth = trackStrokePx,
+                    cap = StrokeCap.Round
+                )
+            } else {
+                val wavelength = 30.dp.toPx()
+                val maxAmp = 3.5.dp.toPx()
+                val taperDist = 16.dp.toPx()
+
+                val path = Path().apply {
+                    moveTo(trackStart, centerY)
+                    var x = trackStart
+                    val stepPx = 2.dp.toPx()
+                    while (x < thumbX) {
+                        x = (x + stepPx).coerceAtMost(thumbX)
+                        val distToThumb = thumbX - x
+                        val taper = (distToThumb / taperDist).coerceIn(0f, 1f)
+                        val amp = maxAmp * taper
+                        val angle = (2f * PI.toFloat() * (x - trackStart) / wavelength) - wavePhase
+                        val y = centerY + amp * sin(angle)
+                        lineTo(x, y)
+                    }
+                }
+                drawPath(
+                    path = path,
+                    color = RecorderColors.BarPlayed,
+                    style = Stroke(width = trackStrokePx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                )
+            }
+        }
+
+        // 3. Thumb handle (vertical tick line)
+        drawLine(
+            color = RecorderColors.BarPlayed,
+            start = Offset(thumbX, centerY - thumbHalfHPx),
+            end = Offset(thumbX, centerY + thumbHalfHPx),
+            strokeWidth = trackStrokePx,
+            cap = StrokeCap.Round
+        )
+    }
+}
+
+private fun DrawScope.drawBar(
     x: Float,
     centerY: Float,
     amplitude: Float,
