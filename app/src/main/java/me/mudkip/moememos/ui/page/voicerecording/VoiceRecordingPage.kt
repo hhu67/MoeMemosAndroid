@@ -285,24 +285,6 @@ private fun LiveTranscriptPane(text: String, available: Boolean) {
     }
 }
 
-@Composable
-private fun RecordingDot(active: Boolean) {
-    val pulse = rememberInfiniteTransition(label = "recording-dot")
-    val alpha by pulse.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.25f,
-        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
-        label = "recording-dot-alpha"
-    )
-    Box(
-        modifier = Modifier
-            .size(18.dp)
-            .alpha(if (active) alpha else 1f)
-            .clip(CircleShape)
-            .background(if (active) RecorderColors.RecordingDot else RecorderColors.Muted)
-    )
-}
-
 /** Two vertical bars; the extended icon set has no plain Pause in this version's filled style. */
 @Composable
 private fun PauseGlyph() {

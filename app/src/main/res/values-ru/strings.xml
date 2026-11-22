@@ -123,6 +123,9 @@
     <string name="transcribe_dialog_title">Расшифровать запись?</string>
     <string name="transcribe_dialog_message">Для расшифровки аудиозапись будет отправлена на сервер Memos.</string>
     <string name="transcribe_action">Расшифровать</string>
+    <string name="slide_to_cancel">&lt; Проведите влево для отмены</string>
+    <string name="release_to_cancel">Отпустите для отмены</string>
+    <string name="voice_memo_saved">Голосовая заметка сохранена</string>
 
     <string name="memos_widget_title">Заметки</string>
     <string name="memory_widget_title">Воспоминание</string>

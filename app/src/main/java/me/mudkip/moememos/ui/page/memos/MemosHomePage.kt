@@ -1,5 +1,12 @@
 package me.mudkip.moememos.ui.page.memos
 
+import android.os.SystemClock
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -21,10 +28,16 @@ import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.navigation.NavHostController
 import android.Manifest
 import android.content.pm.PackageManager
@@ -35,6 +48,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
@@ -46,6 +60,7 @@ import me.mudkip.moememos.ext.string
 import me.mudkip.moememos.ui.component.SyncStatusBadge
 import me.mudkip.moememos.ui.page.common.LocalRootNavController
 import me.mudkip.moememos.ui.page.common.RouteName
+import me.mudkip.moememos.util.QuickVoiceRecordOverlay
 import me.mudkip.moememos.viewmodel.LocalMemos
 import me.mudkip.moememos.viewmodel.LocalUserState
 import me.mudkip.moememos.viewmodel.ManualSyncResult
@@ -75,6 +90,11 @@ private fun MemosHomePageContent(
     val userStateViewModel = LocalUserState.current
     val currentAccount by userStateViewModel.currentAccount.collectAsStateWithLifecycle()
     val syncStatus by memosViewModel.syncStatus.collectAsStateWithLifecycle()
+    val quickRecorder = memosViewModel.quickVoiceRecorder
+    val haptic = LocalHapticFeedback.current
+
+    var dragOffsetX by remember { mutableFloatStateOf(0f) }
+    var isCancelActive by remember { mutableStateOf(false) }
 
     val expandedFab by remember {
         derivedStateOf {
@@ -107,8 +127,9 @@ private fun MemosHomePageContent(
     }
 
 
-    Scaffold(
-        topBar = {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
             TopAppBar(
                 title = { Text(text = R.string.memos.string) },
                 navigationIcon = {
@@ -144,21 +165,84 @@ private fun MemosHomePageContent(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                FloatingActionButton(
-                    onClick = {
-                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                            PackageManager.PERMISSION_GRANTED
-                        ) {
-                            rootNavController.navigate(RouteName.VOICE_RECORDING)
-                        } else {
-                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        }
-                    },
-                    shape = CircleShape,
-                    containerColor = VoiceRecordRed,
-                    contentColor = Color.White
+                // Quick voice note button: tap for full recorder screen, hold for dynamic Telegram-style recording
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(VoiceRecordRed)
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val downTime = SystemClock.elapsedRealtime()
+                                val startX = down.position.x
+                                var isHold = false
+                                var cancelTriggered = false
+                                val holdTimeout = 220L
+
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Main)
+                                    val pressed = event.changes.filter { it.pressed }
+                                    val now = SystemClock.elapsedRealtime()
+
+                                    if (!isHold && now - downTime >= holdTimeout) {
+                                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                                            PackageManager.PERMISSION_GRANTED
+                                        ) {
+                                            isHold = true
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            dragOffsetX = 0f
+                                            isCancelActive = false
+                                            quickRecorder.start()
+                                        } else {
+                                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                            break
+                                        }
+                                    }
+
+                                    if (pressed.isEmpty()) {
+                                        if (isHold) {
+                                            if (cancelTriggered) {
+                                                quickRecorder.cancel()
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            } else {
+                                                quickRecorder.stopAndSave()
+                                                Toast.makeText(context, R.string.voice_memo_saved.string, Toast.LENGTH_SHORT).show()
+                                            }
+                                        } else {
+                                            if (now - downTime < holdTimeout) {
+                                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                                                    PackageManager.PERMISSION_GRANTED
+                                                ) {
+                                                    rootNavController.navigate(RouteName.VOICE_RECORDING)
+                                                } else {
+                                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                                }
+                                            }
+                                        }
+                                        dragOffsetX = 0f
+                                        isCancelActive = false
+                                        break
+                                    }
+
+                                    val pointer = pressed.first()
+                                    if (isHold) {
+                                        pointer.consume()
+                                        val dx = pointer.position.x - startX
+                                        dragOffsetX = dx.coerceAtMost(0f)
+                                        cancelTriggered = dragOffsetX < -220f
+                                        isCancelActive = cancelTriggered
+                                    }
+                                }
+                            }
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Filled.Mic, contentDescription = R.string.start_voice_recording.string)
+                    Icon(
+                        Icons.Filled.Mic,
+                        contentDescription = R.string.start_voice_recording.string,
+                        tint = Color.White
+                    )
                 }
 
                 ExtendedFloatingActionButton(
@@ -188,6 +272,15 @@ private fun MemosHomePageContent(
             )
         }
     )
+
+    QuickVoiceRecordOverlay(
+        isRecording = quickRecorder.isRecording,
+        amplitude = quickRecorder.amplitude,
+        elapsedMs = quickRecorder.elapsedMs,
+        dragOffsetX = dragOffsetX,
+        isCancelActive = isCancelActive
+    )
+}
 
     when (val alert = syncAlert) {
         null -> Unit

@@ -37,6 +37,7 @@ import me.mudkip.moememos.data.service.AccountService
 import me.mudkip.moememos.data.service.MemoService
 import me.mudkip.moememos.ext.getErrorMessage
 import me.mudkip.moememos.ext.string
+import me.mudkip.moememos.util.QuickVoiceRecorder
 import me.mudkip.moememos.widget.WidgetUpdater
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -66,6 +67,20 @@ class MemosViewModel @Inject constructor(
 
     val syncStatus: StateFlow<SyncStatus> =
         memoService.syncStatus.stateIn(viewModelScope, SharingStarted.Eagerly, SyncStatus())
+
+    val quickVoiceRecorder by lazy {
+        QuickVoiceRecorder(
+            appContext = appContext,
+            memoService = memoService,
+            accountService = accountService,
+            scope = viewModelScope,
+            onSaved = {
+                viewModelScope.launch {
+                    refreshLocalSnapshot()
+                }
+            }
+        )
+    }
 
     private val initialLoad = MutableStateFlow(false)
 
@@ -243,6 +258,11 @@ class MemosViewModel @Inject constructor(
         return DailyUsageStat.initialMatrix.map {
             it.copy(count = countMap[it.date] ?: 0)
         }
+    }
+
+    override fun onCleared() {
+        quickVoiceRecorder.cancel()
+        super.onCleared()
     }
 }
 

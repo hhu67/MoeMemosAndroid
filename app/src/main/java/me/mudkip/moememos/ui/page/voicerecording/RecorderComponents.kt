@@ -519,3 +519,21 @@ fun TranscriptHint(text: String, modifier: Modifier = Modifier) {
         )
     }
 }
+
+/** Pulsing red dot shown while recording is active. */
+@Composable
+fun RecordingDot(active: Boolean, modifier: Modifier = Modifier) {
+    val pulse = rememberInfiniteTransition(label = "recording-dot")
+    val alpha by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.25f,
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+        label = "recording-dot-alpha"
+    )
+    Box(
+        modifier = modifier
+            .size(14.dp)
+            .clip(CircleShape)
+            .background(if (active) RecorderColors.RecordingDot.copy(alpha = alpha) else RecorderColors.Muted)
+    )
+}
