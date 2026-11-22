@@ -37,6 +37,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -183,18 +184,22 @@ private val BarGap = 4.5.dp
 private val DotSize = 3.5.dp
 
 /**
- * Live recording waveform. The newest sample is near the right edge and scrolls smoothly left.
- * Continuous silence dots baseline spans across the card with liquid 60/120fps motion.
+ * Live recording waveform.
+ * Renders on a continuous monotonic time-based coordinate space without flickering or jumping.
  */
 @Composable
 fun LiveWaveform(
     amplitudes: List<Float>,
+    elapsedMs: Long,
     isRecording: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    var lastSampleTime by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-    LaunchedEffect(amplitudes.size) {
-        lastSampleTime = SystemClock.elapsedRealtime()
+    var anchorRealtime by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    var anchorElapsedMs by remember { mutableLongStateOf(elapsedMs) }
+
+    LaunchedEffect(elapsedMs) {
+        anchorRealtime = SystemClock.elapsedRealtime()
+        anchorElapsedMs = elapsedMs
     }
 
     val infiniteTransition = rememberInfiniteTransition(label = "live_smooth")
@@ -212,46 +217,42 @@ fun LiveWaveform(
         @Suppress("UNUSED_VARIABLE")
         val unused = ticker
 
-        val step = (BarWidth + BarGap).toPx()
-        val barWidth = BarWidth.toPx()
+        val stepPx = (BarWidth + BarGap).toPx()
+        val barWidthPx = BarWidth.toPx()
         val maxBar = size.height * 0.75f
         val centerY = size.height / 2
+        val pxPerMs = stepPx / 50f
 
-        // Smooth pixel-by-pixel shift between discrete sample updates
         val now = SystemClock.elapsedRealtime()
-        val subSample = if (isRecording) {
-            ((now - lastSampleTime).toFloat() / 50f).coerceIn(0f, 1f)
+        val currentElapsedMs = if (isRecording) {
+            anchorElapsedMs + (now - anchorRealtime)
         } else {
-            0f
-        }
-        val smoothShift = subSample * step
-
-        val rightEdgeX = size.width - 24.dp.toPx() - smoothShift
-
-        // 1. Draw silence dots baseline across the screen
-        var baseDotX = (rightEdgeX % step + step) % step
-        while (baseDotX < size.width) {
-            drawCircle(RecorderColors.BarUpcoming, radius = DotSize.toPx() / 2, center = Offset(baseDotX, centerY))
-            baseDotX += step
+            anchorElapsedMs
         }
 
-        // 2. Draw audio bars from right to left
-        val lastIdx = amplitudes.lastIndex
-        if (lastIdx >= 0) {
-            for (i in lastIdx downTo 0) {
-                val x = rightEdgeX - (lastIdx - i) * step
-                if (x < -step) break
-                val amp = amplitudes[i]
-                drawBar(x, centerY, amp, maxBar, barWidth, RecorderColors.Bar)
+        val rightEdgeX = size.width - 24.dp.toPx()
+
+        // Calculate visible slots from minK to maxK along the unified timeline
+        val minK = (((-stepPx - rightEdgeX) / pxPerMs + currentElapsedMs) / 50f).toInt().coerceAtLeast(0)
+        val maxK = (((size.width + stepPx - rightEdgeX) / pxPerMs + currentElapsedMs) / 50f).toInt() + 1
+
+        for (k in minK..maxK) {
+            val x = rightEdgeX + (k * 50f - currentElapsedMs) * pxPerMs
+            if (x < -stepPx || x > size.width + stepPx) continue
+
+            val amp = if (k in 0 until amplitudes.size) amplitudes[k] else 0f
+            if (amp > 0.01f) {
+                drawBar(x, centerY, amp, maxBar, barWidthPx, RecorderColors.Bar)
+            } else {
+                drawCircle(RecorderColors.BarUpcoming, radius = DotSize.toPx() / 2, center = Offset(x, centerY))
             }
         }
     }
 }
 
 /**
- * Playback waveform: the whole recording, with a fixed playhead in the middle and the waveform
- * scrolling under it. Bars left of the playhead (already played) are brighter.
- * Direct horizontal drag gestures allow scrolling / rewinding smoothly across time with zero lag.
+ * Playback waveform: fixed playhead in the center and waveform smoothly scrolling.
+ * Scrubbing updates position immediately without any resets or lag.
  */
 @Composable
 fun PlaybackWaveform(
@@ -265,6 +266,10 @@ fun PlaybackWaveform(
 ) {
     val step = BarWidth + BarGap
     val barWidth = BarWidth
+    val currentProgress by rememberUpdatedState(progress)
+    val currentOnScrubStart by rememberUpdatedState(onScrubStart)
+    val currentOnScrubbing by rememberUpdatedState(onScrubbing)
+    val currentOnScrubEnd by rememberUpdatedState(onScrubEnd)
 
     Canvas(
         modifier = modifier
@@ -280,8 +285,8 @@ fun PlaybackWaveform(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
-                    onScrubStart()
-                    var accumulatedMs = progress.coerceIn(0f, 1f) * durationMs
+                    currentOnScrubStart()
+                    var accumulatedMs = currentProgress.coerceIn(0f, 1f) * durationMs
                     var lastX = down.position.x
 
                     while (true) {
@@ -294,9 +299,9 @@ fun PlaybackWaveform(
                         lastX = change.position.x
                         // Drag left (dx < 0) advances timeline forward (positive time delta)
                         accumulatedMs = (accumulatedMs - dx / pxPerMs).coerceIn(0f, durationMs.toFloat())
-                        onScrubbing(accumulatedMs.toLong())
+                        currentOnScrubbing(accumulatedMs.toLong())
                     }
-                    onScrubEnd()
+                    currentOnScrubEnd()
                 }
             }
     ) {
@@ -318,7 +323,6 @@ fun PlaybackWaveform(
                 dotX += stepPx
             }
         } else {
-            // Optimized rendering: ONLY iterate over the visible slice of samples (O(1) vs full list)
             val minI = (((-stepPx - playheadX) / pxPerMs + currentMs) / sliceMs).toInt().coerceIn(0, totalSamples)
             val maxI = (((size.width + stepPx - playheadX) / pxPerMs + currentMs) / sliceMs).toInt().plus(1).coerceIn(0, totalSamples)
 
@@ -331,7 +335,7 @@ fun PlaybackWaveform(
             }
         }
 
-        // Draw fixed center playhead cursor
+        // Fixed playhead line
         drawLine(
             color = RecorderColors.Bar,
             start = Offset(playheadX, size.height * 0.08f),
@@ -345,7 +349,6 @@ fun PlaybackWaveform(
 /**
  * Modern Google Recorder / Material 3 squiggly slider.
  * Shows an animated sine wave on the played portion during playback and a vertical tick thumb.
- * Seamlessly handles both tap and drag across the track with zero latency.
  */
 @Composable
 fun SquigglySlider(
@@ -368,6 +371,10 @@ fun SquigglySlider(
         label = "wavePhase"
     )
 
+    val currentOnScrubStart by rememberUpdatedState(onScrubStart)
+    val currentOnValueChange by rememberUpdatedState(onValueChange)
+    val currentOnValueChangeFinished by rememberUpdatedState(onValueChangeFinished)
+
     Canvas(
         modifier = modifier
             .fillMaxWidth()
@@ -379,9 +386,9 @@ fun SquigglySlider(
                     down.consume()
                     val pad = 16.dp.toPx()
                     val trackW = (size.width - 2 * pad).coerceAtLeast(1f)
-                    onScrubStart()
+                    currentOnScrubStart()
                     var progress = ((down.position.x - pad) / trackW).coerceIn(0f, 1f)
-                    onValueChange(progress)
+                    currentOnValueChange(progress)
 
                     while (true) {
                         val event = awaitPointerEvent()
@@ -390,9 +397,9 @@ fun SquigglySlider(
                         val change = pressed.first()
                         change.consume()
                         progress = ((change.position.x - pad) / trackW).coerceIn(0f, 1f)
-                        onValueChange(progress)
+                        currentOnValueChange(progress)
                     }
-                    onValueChangeFinished()
+                    currentOnValueChangeFinished()
                 }
             }
     ) {

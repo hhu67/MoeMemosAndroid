@@ -115,6 +115,7 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
     var positionMs by remember { mutableLongStateOf(0L) }
     var scrubPositionMs by remember { mutableStateOf<Long?>(null) }
     var wasPlayingBeforeScrub by remember { mutableStateOf(false) }
+    var isSeeking by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var showTranscribeDialog by remember { mutableStateOf(false) }
@@ -133,7 +134,11 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
 
     fun seekTo(ms: Long) {
         val target = ms.coerceIn(0, durationMs)
-        player?.seekTo(target.toInt())
+        val mp = player
+        if (mp != null) {
+            isSeeking = true
+            mp.seekTo(target.toInt())
+        }
         updatePlaybackAnchor(target)
     }
 
@@ -159,7 +164,6 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
         if (wasPlayingBeforeScrub) {
             player?.start()
             playing = true
-            updatePlaybackAnchor(target)
         }
     }
 
@@ -181,8 +185,16 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
                     prepare()
                     setOnCompletionListener { mp ->
                         playing = false
+                        isSeeking = false
                         positionMs = mp.duration.toLong()
                         updatePlaybackAnchor(positionMs)
+                    }
+                    setOnSeekCompleteListener { mp ->
+                        isSeeking = false
+                        val current = mp.currentPosition.toLong()
+                        playbackAnchorPositionMs = current
+                        playbackAnchorRealtime = SystemClock.elapsedRealtime()
+                        positionMs = current
                     }
                 }
             }.onFailure { e -> Timber.w(e); loadFailed = true }.getOrNull()
@@ -193,6 +205,7 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
             mediaPlayer?.release()
             player = null
             playing = false
+            isSeeking = false
         }
     }
 
@@ -202,7 +215,7 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
         updatePlaybackAnchor(positionMs)
         while (playing && isActive) {
             withFrameNanos { _ ->
-                if (scrubPositionMs == null) {
+                if (scrubPositionMs == null && !isSeeking) {
                     val elapsed = SystemClock.elapsedRealtime() - playbackAnchorRealtime
                     val est = (playbackAnchorPositionMs + elapsed).coerceIn(0L, durationMs)
                     positionMs = est

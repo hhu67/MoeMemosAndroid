@@ -155,6 +155,7 @@ fun VoiceRecordingPage(
             when (tab) {
                 RecorderTab.WAVEFORM -> LiveWaveform(
                     amplitudes = viewModel.amplitudes,
+                    elapsedMs = viewModel.elapsedMs,
                     isRecording = viewModel.phase == RecorderPhase.RECORDING,
                     modifier = Modifier.align(Alignment.Center)
                 )
