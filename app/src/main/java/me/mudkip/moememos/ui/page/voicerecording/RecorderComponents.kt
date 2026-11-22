@@ -10,8 +10,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -35,7 +35,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -210,7 +209,6 @@ fun LiveWaveform(
     )
 
     Canvas(modifier = modifier.fillMaxWidth().height(240.dp)) {
-        // Ticker read forces Compose to redraw on every frame
         @Suppress("UNUSED_VARIABLE")
         val unused = ticker
 
@@ -253,50 +251,53 @@ fun LiveWaveform(
 /**
  * Playback waveform: the whole recording, with a fixed playhead in the middle and the waveform
  * scrolling under it. Bars left of the playhead (already played) are brighter.
- * Direct horizontal drag gestures allow scrolling / rewinding smoothly across time.
+ * Direct horizontal drag gestures allow scrolling / rewinding smoothly across time with zero lag.
  */
 @Composable
 fun PlaybackWaveform(
     amplitudes: List<Float>,
     progress: Float,
     durationMs: Long,
-    onSeek: (Long) -> Unit,
-    onScrubbing: (Boolean) -> Unit,
+    onScrubStart: () -> Unit,
+    onScrubbing: (Long) -> Unit,
+    onScrubEnd: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val step = BarWidth + BarGap
     val barWidth = BarWidth
 
-    var accumulatedDeltaMs by remember { mutableFloatStateOf(0f) }
-
     Canvas(
         modifier = modifier
             .fillMaxWidth()
             .height(260.dp)
-            .pointerInput(amplitudes, durationMs) {
-                detectHorizontalDragGestures(
-                    onDragStart = {
-                        onScrubbing(true)
-                        accumulatedDeltaMs = progress * durationMs
-                    },
-                    onDragEnd = {
-                        onScrubbing(false)
-                    },
-                    onDragCancel = {
-                        onScrubbing(false)
-                    },
-                    onHorizontalDrag = { change, dragAmount ->
+            .pointerInput(amplitudes.size, durationMs) {
+                if (durationMs <= 0 || amplitudes.isEmpty()) return@pointerInput
+                val totalSamples = amplitudes.size
+                val stepPx = step.toPx()
+                val sliceMs = durationMs.toFloat() / totalSamples
+                val pxPerMs = stepPx / sliceMs
+
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    onScrubStart()
+                    var accumulatedMs = progress.coerceIn(0f, 1f) * durationMs
+                    var lastX = down.position.x
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pressed = event.changes.filter { it.pressed }
+                        if (pressed.isEmpty()) break
+                        val change = pressed.first()
                         change.consume()
-                        if (durationMs > 0 && amplitudes.isNotEmpty()) {
-                            val stepPx = step.toPx()
-                            val sliceMs = durationMs.toFloat() / amplitudes.size
-                            val pxPerMs = stepPx / sliceMs
-                            accumulatedDeltaMs = (accumulatedDeltaMs - dragAmount / pxPerMs)
-                                .coerceIn(0f, durationMs.toFloat())
-                            onSeek(accumulatedDeltaMs.toLong())
-                        }
+                        val dx = change.position.x - lastX
+                        lastX = change.position.x
+                        // Drag left (dx < 0) advances timeline forward (positive time delta)
+                        accumulatedMs = (accumulatedMs - dx / pxPerMs).coerceIn(0f, durationMs.toFloat())
+                        onScrubbing(accumulatedMs.toLong())
                     }
-                )
+                    onScrubEnd()
+                }
             }
     ) {
         val stepPx = step.toPx()
@@ -317,10 +318,13 @@ fun PlaybackWaveform(
                 dotX += stepPx
             }
         } else {
-            for (i in 0 until totalSamples) {
+            // Optimized rendering: ONLY iterate over the visible slice of samples (O(1) vs full list)
+            val minI = (((-stepPx - playheadX) / pxPerMs + currentMs) / sliceMs).toInt().coerceIn(0, totalSamples)
+            val maxI = (((size.width + stepPx - playheadX) / pxPerMs + currentMs) / sliceMs).toInt().plus(1).coerceIn(0, totalSamples)
+
+            for (i in minI until maxI) {
                 val sampleMs = i * sliceMs
                 val x = playheadX + (sampleMs - currentMs) * pxPerMs
-                if (x < -stepPx || x > size.width + stepPx) continue
                 val isPlayed = x <= playheadX
                 val color = if (isPlayed) RecorderColors.BarPlayed else RecorderColors.BarUpcoming
                 drawBar(x, centerY, amplitudes[i], maxBar, barWidthPx, color)
@@ -341,10 +345,12 @@ fun PlaybackWaveform(
 /**
  * Modern Google Recorder / Material 3 squiggly slider.
  * Shows an animated sine wave on the played portion during playback and a vertical tick thumb.
+ * Seamlessly handles both tap and drag across the track with zero latency.
  */
 @Composable
 fun SquigglySlider(
     value: Float,
+    onScrubStart: () -> Unit,
     onValueChange: (Float) -> Unit,
     onValueChangeFinished: () -> Unit,
     isPlaying: Boolean,
@@ -368,38 +374,26 @@ fun SquigglySlider(
             .height(44.dp)
             .pointerInput(enabled) {
                 if (!enabled) return@pointerInput
-                detectTapGestures(
-                    onPress = { offset ->
-                        val pad = 16.dp.toPx()
-                        val trackW = (size.width - 2 * pad).coerceAtLeast(1f)
-                        val progress = ((offset.x - pad) / trackW).coerceIn(0f, 1f)
-                        onValueChange(progress)
-                        val released = tryAwaitRelease()
-                        if (released) {
-                            onValueChangeFinished()
-                        }
-                    }
-                )
-            }
-            .pointerInput(enabled) {
-                if (!enabled) return@pointerInput
-                detectHorizontalDragGestures(
-                    onDragStart = { offset ->
-                        val pad = 16.dp.toPx()
-                        val trackW = (size.width - 2 * pad).coerceAtLeast(1f)
-                        val progress = ((offset.x - pad) / trackW).coerceIn(0f, 1f)
-                        onValueChange(progress)
-                    },
-                    onDragEnd = { onValueChangeFinished() },
-                    onDragCancel = { onValueChangeFinished() },
-                    onHorizontalDrag = { change, _ ->
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    val pad = 16.dp.toPx()
+                    val trackW = (size.width - 2 * pad).coerceAtLeast(1f)
+                    onScrubStart()
+                    var progress = ((down.position.x - pad) / trackW).coerceIn(0f, 1f)
+                    onValueChange(progress)
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pressed = event.changes.filter { it.pressed }
+                        if (pressed.isEmpty()) break
+                        val change = pressed.first()
                         change.consume()
-                        val pad = 16.dp.toPx()
-                        val trackW = (size.width - 2 * pad).coerceAtLeast(1f)
-                        val progress = ((change.position.x - pad) / trackW).coerceIn(0f, 1f)
+                        progress = ((change.position.x - pad) / trackW).coerceIn(0f, 1f)
                         onValueChange(progress)
                     }
-                )
+                    onValueChangeFinished()
+                }
             }
     ) {
         val pad = 16.dp.toPx()

@@ -113,7 +113,8 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
     var playing by remember { mutableStateOf(false) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var positionMs by remember { mutableLongStateOf(0L) }
-    var scrubbing by remember { mutableStateOf<Float?>(null) }
+    var scrubPositionMs by remember { mutableStateOf<Long?>(null) }
+    var wasPlayingBeforeScrub by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var showTranscribeDialog by remember { mutableStateOf(false) }
@@ -128,6 +129,38 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
         playbackAnchorRealtime = SystemClock.elapsedRealtime()
         playbackAnchorPositionMs = pos
         positionMs = pos
+    }
+
+    fun seekTo(ms: Long) {
+        val target = ms.coerceIn(0, durationMs)
+        player?.seekTo(target.toInt())
+        updatePlaybackAnchor(target)
+    }
+
+    fun onScrubStart() {
+        if (scrubPositionMs == null) {
+            scrubPositionMs = positionMs
+            wasPlayingBeforeScrub = playing
+            if (playing) {
+                player?.pause()
+                playing = false
+            }
+        }
+    }
+
+    fun onScrubbing(targetMs: Long) {
+        scrubPositionMs = targetMs.coerceIn(0L, durationMs)
+    }
+
+    fun onScrubEnd() {
+        val target = scrubPositionMs ?: positionMs
+        scrubPositionMs = null
+        seekTo(target)
+        if (wasPlayingBeforeScrub) {
+            player?.start()
+            playing = true
+            updatePlaybackAnchor(target)
+        }
     }
 
     LaunchedEffect(audio.identifier) {
@@ -169,7 +202,7 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
         updatePlaybackAnchor(positionMs)
         while (playing && isActive) {
             withFrameNanos { _ ->
-                if (scrubbing == null) {
+                if (scrubPositionMs == null) {
                     val elapsed = SystemClock.elapsedRealtime() - playbackAnchorRealtime
                     val est = (playbackAnchorPositionMs + elapsed).coerceIn(0L, durationMs)
                     positionMs = est
@@ -187,12 +220,6 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
                 }
             }
         }
-    }
-
-    fun seekTo(ms: Long) {
-        val target = ms.coerceIn(0, durationMs)
-        player?.seekTo(target.toInt())
-        updatePlaybackAnchor(target)
     }
 
     fun togglePlay() {
@@ -226,7 +253,7 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
         }
     }
 
-    val shownPosition = scrubbing?.let { (it * durationMs).toLong() } ?: positionMs
+    val shownPosition = scrubPositionMs ?: positionMs
     val progress = if (durationMs > 0) shownPosition.toFloat() / durationMs else 0f
     val transcript = VoiceMemoFormat.transcriptOf(memo.content)
 
@@ -319,14 +346,9 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
                     amplitudes = waveform,
                     progress = progress,
                     durationMs = durationMs,
-                    onSeek = { seekTo(it) },
-                    onScrubbing = { isScrubbing ->
-                        if (isScrubbing) {
-                            scrubbing = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f
-                        } else {
-                            scrubbing = null
-                        }
-                    },
+                    onScrubStart = ::onScrubStart,
+                    onScrubbing = ::onScrubbing,
+                    onScrubEnd = ::onScrubEnd,
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
@@ -348,11 +370,11 @@ fun VoiceMemoPlayer(memo: MemoEntity, audio: ResourceEntity, onBack: () -> Unit)
         // Modern Google Recorder squiggly slider
         SquigglySlider(
             value = progress,
-            onValueChange = { scrubbing = it },
-            onValueChangeFinished = {
-                scrubbing?.let { seekTo((it * durationMs).toLong()) }
-                scrubbing = null
+            onScrubStart = ::onScrubStart,
+            onValueChange = { scrubProgress ->
+                onScrubbing((scrubProgress * durationMs).toLong())
             },
+            onValueChangeFinished = ::onScrubEnd,
             isPlaying = playing,
             enabled = player != null && durationMs > 0,
             modifier = Modifier.padding(horizontal = 8.dp)
