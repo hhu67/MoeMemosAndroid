@@ -53,6 +53,7 @@ abstract class AbstractMemoRepository {
 
     open suspend fun listFolders(): ApiResponse<List<FolderEntity>> = ApiResponse.Success(emptyList())
     open suspend fun createFolder(title: String, parent: String? = null): ApiResponse<FolderEntity> = ApiResponse.Failure.Exception(UnsupportedOperationException())
+    open suspend fun updateFolder(name: String, title: String? = null, parent: String? = null): ApiResponse<FolderEntity> = ApiResponse.Failure.Exception(UnsupportedOperationException())
     open suspend fun deleteFolder(name: String): ApiResponse<Unit> = ApiResponse.Success(Unit)
     open fun observeFolders(): Flow<List<FolderEntity>> = emptyFlow()
 

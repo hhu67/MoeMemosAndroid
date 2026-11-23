@@ -186,4 +186,18 @@
     <string name="create">Создать</string>
     <string name="title">Заголовок</string>
     <string name="title_optional">Заголовок (необязательно)</string>
+
+    <!-- Уведомление записи аудиозаметки -->
+    <string name="voice_recording_channel_name">Запись аудиозаметок</string>
+    <string name="voice_recording_channel_desc">Уведомление управления записью аудиозаметки</string>
+    <string name="recording_voice_memo">Идёт запись аудиозаметки…</string>
+    <string name="recording_paused">Запись на паузе</string>
+
+    <!-- Контекстное меню папки -->
+    <string name="rename">Переименовать</string>
+    <string name="rename_folder">Переименовать папку</string>
+    <string name="delete_folder_only">Удалить только папку</string>
+    <string name="delete_folder_and_contents">Удалить папку и всё содержимое</string>
+    <string name="delete_folder_and_contents_confirm">Удалить папку «%1$s» и все заметки внутри неё (%2$d)? Это действие нельзя будет отменить.</string>
+    <string name="delete_all">Удалить всё</string>
 </resources>

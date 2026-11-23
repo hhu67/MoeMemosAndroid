@@ -12,19 +12,28 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.FolderDelete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DrawerState
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -94,7 +103,10 @@ private fun FolderPageContent(
     var dragOffsetX by remember { mutableFloatStateOf(0f) }
     var isCancelActive by remember { mutableStateOf(false) }
     var showCreateSubfolderDialog by remember { mutableStateOf(false) }
-    var showDeleteDialog by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteMenu by remember { mutableStateOf(false) }
+    var showDeleteOnlyDialog by remember { mutableStateOf(false) }
+    var showDeleteAllDialog by remember { mutableStateOf(false) }
 
     val expandedFab by remember {
         derivedStateOf {
@@ -150,13 +162,66 @@ private fun FolderPageContent(
                         )
                     }
                     ActionIconButton(
-                        label = stringResource(R.string.delete_folder),
-                        onClick = { showDeleteDialog = true }
+                        label = stringResource(R.string.rename),
+                        onClick = { showRenameDialog = true }
                     ) {
                         Icon(
-                            Icons.Outlined.Delete,
-                            contentDescription = stringResource(R.string.delete_folder)
+                            Icons.Outlined.Edit,
+                            contentDescription = stringResource(R.string.rename)
                         )
+                    }
+                    Box {
+                        ActionIconButton(
+                            label = stringResource(R.string.delete_folder),
+                            onClick = { showDeleteMenu = true }
+                        ) {
+                            Icon(
+                                Icons.Outlined.Delete,
+                                contentDescription = stringResource(R.string.delete_folder)
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showDeleteMenu,
+                            onDismissRequest = { showDeleteMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.delete_folder_only)) },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Outlined.FolderDelete,
+                                        contentDescription = null
+                                    )
+                                },
+                                onClick = {
+                                    showDeleteMenu = false
+                                    showDeleteOnlyDialog = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        stringResource(R.string.delete_folder_and_contents),
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Outlined.DeleteForever,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                },
+                                colors = MenuDefaults.itemColors(
+                                    textColor = MaterialTheme.colorScheme.error,
+                                    leadingIconColor = MaterialTheme.colorScheme.error
+                                ),
+                                onClick = {
+                                    showDeleteMenu = false
+                                    showDeleteAllDialog = true
+                                }
+                            )
+                        }
                     }
                 }
             )
@@ -303,17 +368,55 @@ private fun FolderPageContent(
         )
     }
 
-    if (showDeleteDialog) {
+    if (showRenameDialog) {
+        var newTitle by remember { mutableStateOf(folderTitle) }
         AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text(stringResource(R.string.rename_folder)) },
+            text = {
+                OutlinedTextField(
+                    value = newTitle,
+                    onValueChange = { newTitle = it },
+                    label = { Text(stringResource(R.string.folder_name)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val trimmed = newTitle.trim()
+                        if (trimmed.isNotBlank()) {
+                            showRenameDialog = false
+                            scope.launch {
+                                memosViewModel.updateFolder(folderName, trimmed)
+                            }
+                        }
+                    },
+                    enabled = newTitle.trim().isNotBlank()
+                ) {
+                    Text(stringResource(R.string.save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
+    if (showDeleteOnlyDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteOnlyDialog = false },
             title = { Text(stringResource(R.string.delete_folder)) },
             text = { Text(stringResource(R.string.delete_folder_confirm, folderTitle)) },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        showDeleteDialog = false
+                        showDeleteOnlyDialog = false
                         scope.launch {
-                            memosViewModel.deleteFolder(folderName)
+                            memosViewModel.deleteFolder(folderName, deleteContents = false)
                             navController.popBackStack()
                         }
                     }
@@ -325,7 +428,37 @@ private fun FolderPageContent(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) {
+                TextButton(onClick = { showDeleteOnlyDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
+    if (showDeleteAllDialog) {
+        val memoCount = memosViewModel.memos.count { it.folder == folderName }
+        AlertDialog(
+            onDismissRequest = { showDeleteAllDialog = false },
+            title = { Text(stringResource(R.string.delete_folder_and_contents)) },
+            text = { Text(stringResource(R.string.delete_folder_and_contents_confirm, folderTitle, memoCount)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteAllDialog = false
+                        scope.launch {
+                            memosViewModel.deleteFolder(folderName, deleteContents = true)
+                            navController.popBackStack()
+                        }
+                    }
+                ) {
+                    Text(
+                        stringResource(R.string.delete_all),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteAllDialog = false }) {
                     Text(stringResource(R.string.cancel))
                 }
             }

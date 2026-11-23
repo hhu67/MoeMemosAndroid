@@ -128,7 +128,30 @@ class MemosViewModel @Inject constructor(
         res
     }
 
-    suspend fun deleteFolder(name: String): ApiResponse<Unit> = withContext(viewModelScope.coroutineContext) {
+    suspend fun updateFolder(name: String, title: String): ApiResponse<FolderEntity> = withContext(viewModelScope.coroutineContext) {
+        val res = memoService.getRepository().updateFolder(name, title = title)
+        if (res is ApiResponse.Success) {
+            refreshFolders()
+        }
+        res
+    }
+
+    suspend fun deleteFolder(name: String, deleteContents: Boolean = false): ApiResponse<Unit> = withContext(viewModelScope.coroutineContext) {
+        if (deleteContents) {
+            val folderNames = mutableSetOf(name)
+            fun findSubfolders(parent: String) {
+                folders.filter { it.parent == parent }.forEach { child ->
+                    folderNames.add(child.name)
+                    findSubfolders(child.name)
+                }
+            }
+            findSubfolders(name)
+
+            val memosToDelete = memos.filter { memo -> folderNames.contains(memo.folder) }
+            for (memo in memosToDelete) {
+                memoService.getRepository().deleteMemo(memo.identifier)
+            }
+        }
         val res = memoService.getRepository().deleteFolder(name)
         if (res is ApiResponse.Success) {
             refreshFolders()

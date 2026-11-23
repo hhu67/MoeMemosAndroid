@@ -2,6 +2,7 @@ package me.mudkip.moememos.ui.page.voicerecording
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -84,8 +85,10 @@ fun VoiceRecordingPage(
         ?: remember { formatVoiceTitle(context, viewModel.startedAt) }
     RecorderSystemBars()
 
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) {
+    val permissionsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        if (results[Manifest.permission.RECORD_AUDIO] == true) {
             viewModel.start()
         } else {
             Toast.makeText(context, R.string.audio_permission_required.string, Toast.LENGTH_LONG).show()
@@ -95,10 +98,19 @@ fun VoiceRecordingPage(
 
     LaunchedEffect(Unit) {
         if (viewModel.phase != RecorderPhase.IDLE) return@LaunchedEffect
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+        val hasAudio = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val hasNotif = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        } else true
+
+        if (hasAudio && hasNotif) {
             viewModel.start()
         } else {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            val list = mutableListOf(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotif) {
+                list.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            permissionsLauncher.launch(list.toTypedArray())
         }
     }
 

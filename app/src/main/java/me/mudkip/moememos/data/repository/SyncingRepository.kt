@@ -1130,6 +1130,37 @@ class SyncingRepository(
         }
     }
 
+    override suspend fun updateFolder(name: String, title: String?, parent: String?): ApiResponse<FolderEntity> {
+        return try {
+            val remoteRes = remoteRepository.updateFolder(name, title, parent)
+            val now = Instant.now()
+            val existing = folderDao?.getFolderByName(name, accountKey)
+            val folder = if (remoteRes is ApiResponse.Success) {
+                FolderEntity(
+                    name = remoteRes.data.name,
+                    accountKey = accountKey,
+                    title = remoteRes.data.title,
+                    parent = remoteRes.data.parent,
+                    createTime = remoteRes.data.createTime ?: existing?.createTime ?: now,
+                    updateTime = remoteRes.data.updateTime ?: now
+                )
+            } else {
+                FolderEntity(
+                    name = name,
+                    accountKey = accountKey,
+                    title = title ?: existing?.title ?: "",
+                    parent = parent ?: existing?.parent,
+                    createTime = existing?.createTime ?: now,
+                    updateTime = now
+                )
+            }
+            folderDao?.insertFolder(folder)
+            ApiResponse.Success(folder)
+        } catch (e: Exception) {
+            ApiResponse.Failure.Exception(e)
+        }
+    }
+
     override suspend fun deleteFolder(name: String): ApiResponse<Unit> {
         return try {
             remoteRepository.deleteFolder(name)

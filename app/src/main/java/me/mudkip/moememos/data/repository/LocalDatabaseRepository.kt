@@ -311,6 +311,22 @@ class LocalDatabaseRepository(
         }
     }
 
+    override suspend fun updateFolder(name: String, title: String?, parent: String?): ApiResponse<FolderEntity> {
+        return try {
+            val existing = folderDao?.getFolderByName(name, accountKey)
+                ?: return ApiResponse.Failure.Exception(Exception("Folder not found"))
+            val updated = existing.copy(
+                title = title ?: existing.title,
+                parent = parent ?: existing.parent,
+                updateTime = Instant.now()
+            )
+            folderDao.insertFolder(updated)
+            ApiResponse.Success(updated)
+        } catch (e: Exception) {
+            ApiResponse.Failure.Exception(e)
+        }
+    }
+
     override suspend fun deleteFolder(name: String): ApiResponse<Unit> {
         return try {
             folderDao?.deleteFolderAndChildren(name, accountKey)

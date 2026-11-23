@@ -250,4 +250,18 @@
     <string name="create">Create</string>
     <string name="title">Title</string>
     <string name="title_optional">Title (optional)</string>
+
+    <!-- Voice Recording Foreground Service -->
+    <string name="voice_recording_channel_name">Voice Recording</string>
+    <string name="voice_recording_channel_desc">Voice recording controls notification</string>
+    <string name="recording_voice_memo">Recording voice note…</string>
+    <string name="recording_paused">Recording paused</string>
+
+    <!-- Folder Context Menu -->
+    <string name="rename">Rename</string>
+    <string name="rename_folder">Rename folder</string>
+    <string name="delete_folder_only">Delete folder only</string>
+    <string name="delete_folder_and_contents">Delete folder and all contents</string>
+    <string name="delete_folder_and_contents_confirm">Delete folder \"%1$s\" and all its contents (%2$d memos)? This action cannot be undone.</string>
+    <string name="delete_all">Delete All</string>
 </resources>

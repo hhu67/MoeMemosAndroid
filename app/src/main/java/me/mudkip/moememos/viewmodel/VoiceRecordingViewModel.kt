@@ -29,6 +29,8 @@ import me.mudkip.moememos.data.service.AccountService
 import me.mudkip.moememos.data.service.MemoService
 import me.mudkip.moememos.ext.getErrorMessage
 import me.mudkip.moememos.ext.string
+import me.mudkip.moememos.service.VoiceRecordingService
+import me.mudkip.moememos.service.VoiceRecordingSession
 import me.mudkip.moememos.util.LiveTranscriber
 import me.mudkip.moememos.util.VoiceMemoFormat
 import me.mudkip.moememos.util.extractWaveform
@@ -156,6 +158,21 @@ class VoiceRecordingViewModel @Inject constructor(
                 phase = RecorderPhase.RECORDING
                 transcriber.start()
                 startTicker()
+                VoiceRecordingService.start(appContext)
+                VoiceRecordingSession.listener = object : VoiceRecordingSession.Listener {
+                    override fun onPauseRequested() {
+                        pause()
+                    }
+                    override fun onResumeRequested() {
+                        resume()
+                    }
+                    override fun onSaveRequested() {
+                        stopAndSave()
+                    }
+                    override fun onDiscardRequested() {
+                        discard()
+                    }
+                }
             } catch (e: Exception) {
                 Timber.e(e)
                 releaseRecorder()
@@ -171,6 +188,7 @@ class VoiceRecordingViewModel @Inject constructor(
         elapsedMs = accumulatedMs
         phase = RecorderPhase.PAUSED
         transcriber.pause()
+        VoiceRecordingService.update(appContext, isPaused = true, elapsedMs = elapsedMs)
     }
 
     fun resume() {
@@ -179,6 +197,7 @@ class VoiceRecordingViewModel @Inject constructor(
         segmentStart = System.currentTimeMillis()
         phase = RecorderPhase.RECORDING
         transcriber.resume()
+        VoiceRecordingService.update(appContext, isPaused = false, elapsedMs = elapsedMs)
     }
 
     /** Throws the recording away. */
@@ -188,6 +207,8 @@ class VoiceRecordingViewModel @Inject constructor(
         releaseRecorder()
         audioFile?.delete()
         audioFile = null
+        VoiceRecordingService.stop(appContext)
+        VoiceRecordingSession.listener = null
         phase = RecorderPhase.DONE
     }
 
@@ -203,6 +224,8 @@ class VoiceRecordingViewModel @Inject constructor(
         elapsedMs = accumulatedMs
         tickerJob?.cancel()
         phase = RecorderPhase.SAVING
+        VoiceRecordingService.stop(appContext)
+        VoiceRecordingSession.listener = null
         val stopped = runCatching { recorder?.stop() }.isSuccess
         releaseRecorder()
         transcriber.stop()
@@ -316,8 +339,11 @@ class VoiceRecordingViewModel @Inject constructor(
     private suspend fun transcribeOnServer(file: File): String? =
         transcribeAudioFile(file, accountService.currentAccount.first(), accountService.httpClient)
 
+    private var lastNotifUpdateMs = 0L
+
     private fun startTicker() {
         tickerJob?.cancel()
+        lastNotifUpdateMs = 0L
         tickerJob = viewModelScope.launch {
             while (isActive) {
                 delay(SAMPLE_INTERVAL_MS)
@@ -326,6 +352,11 @@ class VoiceRecordingViewModel @Inject constructor(
                 // Peak amplitude since the previous call: this is what makes bars follow loudness.
                 val peak = runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0)
                 amplitudes.add(normalizeAmplitude(peak))
+
+                if (elapsedMs - lastNotifUpdateMs >= 1000L) {
+                    lastNotifUpdateMs = elapsedMs
+                    VoiceRecordingService.update(appContext, isPaused = false, elapsedMs = elapsedMs)
+                }
             }
         }
     }
@@ -346,6 +377,8 @@ class VoiceRecordingViewModel @Inject constructor(
     override fun onCleared() {
         tickerJob?.cancel()
         transcriber.destroy()
+        VoiceRecordingService.stop(appContext)
+        VoiceRecordingSession.listener = null
         if (phase == RecorderPhase.RECORDING || phase == RecorderPhase.PAUSED) {
             releaseRecorder()
             audioFile?.delete()
