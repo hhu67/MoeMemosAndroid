@@ -54,6 +54,17 @@ fun MemosNavigation(
         }
 
         composable(
+            "${RouteName.FOLDER}/{folderName}"
+        ) { entry ->
+            val folderName = entry.arguments?.getString("folderName")?.let(Uri::decode) ?: ""
+            FolderPage(
+                folderName = folderName,
+                navController = navController,
+                drawerState = drawerState
+            )
+        }
+
+        composable(
             RouteName.EXPLORE
         ) {
             if (hasExplore) {

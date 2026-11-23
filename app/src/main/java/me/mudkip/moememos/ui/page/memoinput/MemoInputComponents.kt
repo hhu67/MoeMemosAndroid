@@ -264,6 +264,8 @@ internal fun MemoInputBottomBar(
 @Composable
 internal fun MemoInputEditor(
     modifier: Modifier = Modifier,
+    title: String = "",
+    onTitleChange: (String) -> Unit = {},
     text: TextFieldValue,
     onTextChange: (TextFieldValue) -> Unit,
     focusRequester: FocusRequester,
@@ -310,6 +312,17 @@ internal fun MemoInputEditor(
                 }
             )
     ) {
+        OutlinedTextField(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 8.dp),
+            value = title,
+            label = { Text(R.string.title_optional.string) },
+            onValueChange = onTitleChange,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
+        )
+
         OutlinedTextField(
             modifier = Modifier
                 .fillMaxWidth()

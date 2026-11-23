@@ -60,7 +60,8 @@ private const val MaxSelectableImages = 100
 fun MemoInputPage(
     viewModel: MemoInputViewModel = hiltViewModel(),
     memoIdentifier: String? = null,
-    shareContent: ShareContent? = null
+    shareContent: ShareContent? = null,
+    folder: String? = null,
 ) {
     val focusRequester = remember { FocusRequester() }
     val coroutineScope = rememberCoroutineScope()
@@ -81,6 +82,7 @@ fun MemoInputPage(
     var autosaveDirty by remember { mutableStateOf(false) }
     var exiting by remember { mutableStateOf(false) }
     var initialContent by remember { mutableStateOf(memo?.content ?: "") }
+    var title by rememberSaveable { mutableStateOf(memo?.title ?: "") }
     var text by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(memo?.content ?: "", TextRange(memo?.content?.length ?: 0)))
     }
@@ -107,12 +109,15 @@ fun MemoInputPage(
         val base = baseline ?: return false
         return !autosaveDirty &&
             text.text == base.content &&
+            (title.ifBlank { null } == base.title) &&
             currentVisibility == base.visibility &&
             locationState.value == base.location &&
             viewModel.uploadResources.size == base.resources.size
     }
 
     fun submit() = coroutineScope.launch {
+        viewModel.memoTitle = title.ifBlank { null }
+        viewModel.targetFolder = folder ?: baseline?.folder
         val tags = extractCustomTags(text.text)
 
         if (autosaveEnabled && isUntouchedExistingMemo()) {
@@ -155,6 +160,8 @@ fun MemoInputPage(
     }
 
     fun handleExit() {
+        viewModel.memoTitle = title.ifBlank { null }
+        viewModel.targetFolder = folder ?: baseline?.folder
         if (autosaveEnabled) {
             coroutineScope.launch {
                 // Only a row this editor created may be discarded. `memo` is also null when editing a
@@ -287,6 +294,8 @@ fun MemoInputPage(
     ) { innerPadding ->
         MemoInputEditor(
             modifier = Modifier.padding(innerPadding),
+            title = title,
+            onTitleChange = { title = it },
             text = text,
             onTextChange = { updated ->
                 if (
@@ -355,6 +364,9 @@ fun MemoInputPage(
             initialRow != null -> {
                 viewModel.uploadResources.addAll(initialRow.resources)
                 initialContent = initialRow.content
+                title = initialRow.title ?: ""
+                viewModel.memoTitle = title.ifBlank { null }
+                viewModel.targetFolder = folder ?: initialRow.folder
                 // Adopt the database row if the list copy was stale and nothing was edited yet
                 val fresh = viewModel.loadMemo(initialRow.identifier) ?: initialRow
                 if (!editorRestored && (memo == null || isUntouchedExistingMemo())) {
@@ -365,11 +377,16 @@ fun MemoInputPage(
                     viewModel.uploadResources.clear()
                     viewModel.uploadResources.addAll(fresh.resources)
                     text = TextFieldValue(fresh.content, TextRange(fresh.content.length))
+                    title = fresh.title ?: ""
+                    viewModel.memoTitle = title.ifBlank { null }
+                    viewModel.targetFolder = folder ?: fresh.folder
                 }
                 baseline = fresh
             }
 
             shareContent != null && !editorRestored -> {
+                viewModel.memoTitle = null
+                viewModel.targetFolder = folder
                 text = TextFieldValue(shareContent.text, TextRange(shareContent.text.length))
                 for (item in shareContent.images) {
                     uploadImage(item)
@@ -377,6 +394,8 @@ fun MemoInputPage(
             }
 
             else -> {
+                viewModel.memoTitle = null
+                viewModel.targetFolder = folder
                 // After process death with an autosaved row, the restored text is newer than the draft
                 if (autosaveIdentifier == null && !editorRestored) {
                     if (locationState.value == null) locationState = MemoLocationChange(viewModel.draftLocation.first())
@@ -394,18 +413,20 @@ fun MemoInputPage(
 
     // Restarts per change; a restart cancels a previous run still waiting for the autosave mutex,
     // so at most one write runs and one (the newest) waits.
-    LaunchedEffect(initialized, autosaveEnabled, text.text, currentVisibility, locationState.value, viewModel.uploadResources.size) {
+    LaunchedEffect(initialized, autosaveEnabled, text.text, title, currentVisibility, locationState.value, viewModel.uploadResources.size) {
         if (!initialized || !autosaveEnabled) {
             return@LaunchedEffect
         }
         autosaveIdentifier = autosaveIdentifier ?: viewModel.autosaveIdentifier
-        if (autosaveIdentifier == null && text.text.isEmpty() && viewModel.uploadResources.isEmpty()) {
+        if (autosaveIdentifier == null && text.text.isEmpty() && viewModel.uploadResources.isEmpty() && title.isEmpty()) {
             return@LaunchedEffect
         }
         if (isUntouchedExistingMemo()) {
             return@LaunchedEffect
         }
         autosaveDirty = true
+        viewModel.memoTitle = title.ifBlank { null }
+        viewModel.targetFolder = folder ?: baseline?.folder
         viewModel.autosave(
             text.text,
             currentVisibility,
@@ -422,6 +443,8 @@ fun MemoInputPage(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP && autosaveEnabled && autosaveDirty && !exiting) {
+                viewModel.memoTitle = title.ifBlank { null }
+                viewModel.targetFolder = folder ?: baseline?.folder
                 viewModel.flushAutosaveInBackground(
                     text.text,
                     currentVisibility,

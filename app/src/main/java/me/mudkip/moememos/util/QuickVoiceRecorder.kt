@@ -97,6 +97,7 @@ class QuickVoiceRecorder(
         private set
     var isSaving by mutableStateOf(false)
         private set
+    var targetFolder: String? = null
 
     private var recorder: MediaRecorder? = null
     private var audioFile: File? = null
@@ -187,7 +188,8 @@ class QuickVoiceRecorder(
                     val memo = repository.createMemo(
                         content = transcript,
                         visibility = visibility,
-                        resources = listOf(resource.data)
+                        resources = listOf(resource.data),
+                        folder = targetFolder
                     )
                     if (memo is ApiResponse.Success) {
                         file.delete()

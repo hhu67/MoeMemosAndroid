@@ -20,4 +20,6 @@ interface MemoRepresentable {
     val resources: List<ResourceRepresentable>
     val archived: Boolean
     val location: MemoLocation?
+    val folder: String? get() = null
+    val title: String? get() = null
 }

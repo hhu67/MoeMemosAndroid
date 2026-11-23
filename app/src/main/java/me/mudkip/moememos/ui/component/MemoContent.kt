@@ -42,8 +42,18 @@ fun MemoContent(
     onTagClick: ((String) -> Unit)? = null
 ) {
     val rootNavController = LocalRootNavController.current
-    val (text, previewed) = remember(memo.content, previewMode) {
-        if (previewMode) {
+    val hasTitle = !memo.title.isNullOrBlank()
+    val (text, previewed) = remember(memo.content, previewMode, hasTitle) {
+        if (hasTitle) {
+            val lines = memo.content.lines()
+            if (lines.size > 5) {
+                Pair(lines.take(5).joinToString("\n"), true)
+            } else if (previewMode) {
+                extractPreviewContent(markdownText = memo.content)
+            } else {
+                Pair(memo.content, false)
+            }
+        } else if (previewMode) {
             extractPreviewContent(markdownText = memo.content)
         } else {
             Pair(memo.content, false)

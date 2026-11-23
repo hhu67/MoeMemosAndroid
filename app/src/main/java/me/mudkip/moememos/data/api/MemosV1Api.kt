@@ -40,6 +40,28 @@ interface MemosV1Api {
     @DELETE("api/v1/memos/{id}")
     suspend fun deleteMemo(@Path("id") memoId: String): ApiResponse<Unit>
 
+    @GET("api/v1/folders")
+    suspend fun listFolders(
+        @Query("pageSize") pageSize: Int = 1000,
+        @Query("pageToken") pageToken: String? = null,
+    ): ApiResponse<ListFoldersResponse>
+
+    @POST("api/v1/folders")
+    suspend fun createFolder(
+        @Query("folderId") folderId: String? = null,
+        @Body body: CreateFolderRequest,
+    ): ApiResponse<MemosFolder>
+
+    @PATCH("api/v1/folders/{id}")
+    suspend fun updateFolder(
+        @Path("id") folderId: String,
+        @Query("updateMask") updateMask: String,
+        @Body body: UpdateFolderRequest,
+    ): ApiResponse<MemosFolder>
+
+    @DELETE("api/v1/folders/{id}")
+    suspend fun deleteFolder(@Path("id") folderId: String): ApiResponse<Unit>
+
     @GET("api/v1/attachments")
     suspend fun listResources(): ApiResponse<ListResourceResponse>
 
@@ -88,6 +110,8 @@ data class MemosV1CreateMemoRequest(
     @Serializable(with = Rfc3339InstantSerializer::class)
     val createTime: Instant? = null,
     val location: MemoLocation? = null,
+    val folder: String? = null,
+    val title: String? = null,
 )
 
 @Serializable
@@ -106,9 +130,11 @@ data class UpdateMemoRequest(
     val updateTime: Instant? = null,
     val attachments: List<MemosV1Resource>? = null,
     val location: MemoLocation? = null,
+    val folder: String? = null,
+    val title: String? = null,
 ) {
-    // The network serializer omits nulls. An explicit mask still clears an absent location.
-    fun updateMask(includeLocation: Boolean): String = buildList {
+    // The network serializer omits nulls. An explicit mask still clears an absent location or folder.
+    fun updateMask(includeLocation: Boolean, includeFolder: Boolean = false): String = buildList {
         if (content != null) add("content")
         if (visibility != null) add("visibility")
         if (state != null) add("state")
@@ -116,8 +142,40 @@ data class UpdateMemoRequest(
         if (updateTime != null) add("update_time")
         if (attachments != null) add("attachments")
         if (includeLocation) add("location")
+        if (includeFolder || folder != null) add("folder")
+        if (title != null) add("title")
     }.joinToString(",")
 }
+
+@Serializable
+data class MemosFolder(
+    val name: String = "",
+    val title: String,
+    val parent: String? = null,
+    @Serializable(with = Rfc3339InstantSerializer::class)
+    val createTime: Instant? = null,
+    @Serializable(with = Rfc3339InstantSerializer::class)
+    val updateTime: Instant? = null,
+)
+
+@Serializable
+data class ListFoldersResponse(
+    val folders: List<MemosFolder> = emptyList(),
+    val nextPageToken: String = "",
+)
+
+@Serializable
+data class CreateFolderRequest(
+    val title: String,
+    val parent: String? = null,
+)
+
+@Serializable
+data class UpdateFolderRequest(
+    val name: String? = null,
+    val title: String? = null,
+    val parent: String? = null,
+)
 
 @Serializable
 data class ListResourceResponse(
@@ -147,6 +205,8 @@ data class MemosV1Memo(
     val attachments: List<MemosV1Resource>? = null,
     val tags: List<String>? = null,
     val location: MemoLocation? = null,
+    val folder: String? = null,
+    val title: String? = null,
 )
 
 @Serializable

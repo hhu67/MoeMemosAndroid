@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,11 +58,14 @@ import kotlinx.coroutines.launch
 import me.mudkip.moememos.R
 import me.mudkip.moememos.data.model.Account
 import me.mudkip.moememos.ext.string
+import me.mudkip.moememos.ui.component.CreateFolderDialog
 import me.mudkip.moememos.ui.component.SyncStatusBadge
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import android.net.Uri
 import me.mudkip.moememos.ui.page.common.LocalRootNavController
 import me.mudkip.moememos.ui.page.common.RouteName
 import me.mudkip.moememos.util.DynamicVoiceRecordButton
@@ -99,6 +103,7 @@ private fun MemosHomePageContent(
 
     var dragOffsetX by remember { mutableFloatStateOf(0f) }
     var isCancelActive by remember { mutableStateOf(false) }
+    var showCreateFolderDialog by remember { mutableStateOf(false) }
 
     val expandedFab by remember {
         derivedStateOf {
@@ -154,6 +159,12 @@ private fun MemosHomePageContent(
                             }
                         )
                     }
+                    ActionIconButton(
+                        label = stringResource(R.string.new_folder),
+                        onClick = { showCreateFolderDialog = true }
+                    ) {
+                        Icon(Icons.Outlined.CreateNewFolder, contentDescription = stringResource(R.string.new_folder))
+                    }
                     ActionIconButton(label = R.string.search.string, onClick = {
                         navController.navigate(RouteName.SEARCH)
                     }) {
@@ -207,6 +218,7 @@ private fun MemosHomePageContent(
                                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                             dragOffsetX = 0f
                                             isCancelActive = false
+                                            quickRecorder.targetFolder = null
                                             quickRecorder.start()
                                         } else {
                                             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -273,6 +285,10 @@ private fun MemosHomePageContent(
         content = { innerPadding ->
             MemosList(
                 onMemoClick = onMemoClick,
+                folderName = null,
+                onFolderClick = { folder ->
+                    navController.navigate("${RouteName.FOLDER}/${Uri.encode(folder.name)}")
+                },
                 lazyListState = listState,
                 contentPadding = innerPadding,
                 additionalBottomPadding = MemoListFabAvoidancePadding,
@@ -286,6 +302,19 @@ private fun MemosHomePageContent(
             )
         }
     )
+
+    if (showCreateFolderDialog) {
+        CreateFolderDialog(
+            parentFolderName = null,
+            onDismiss = { showCreateFolderDialog = false },
+            onConfirm = { folderTitle ->
+                showCreateFolderDialog = false
+                scope.launch {
+                    memosViewModel.createFolder(folderTitle, parent = null)
+                }
+            }
+        )
+    }
 
     when (val alert = syncAlert) {
         null -> Unit

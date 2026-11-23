@@ -115,7 +115,8 @@ class AccountService @Inject constructor(
     private var repository: AbstractMemoRepository = LocalDatabaseRepository(
         database.memoDao(),
         fileStorage,
-        Account.Local(LocalAccount())
+        Account.Local(LocalAccount()),
+        folderDao = database.folderDao()
     )
 
     @Volatile
@@ -142,12 +143,12 @@ class AccountService @Inject constructor(
         repository.close()
         when (account) {
             null -> {
-                this.repository = LocalDatabaseRepository(database.memoDao(), fileStorage, Account.Local(LocalAccount()))
+                this.repository = LocalDatabaseRepository(database.memoDao(), fileStorage, Account.Local(LocalAccount()), folderDao = database.folderDao())
                 this.remoteRepository = null
                 httpClient = okHttpClient
             }
             is Account.Local -> {
-                this.repository = LocalDatabaseRepository(database.memoDao(), fileStorage, account)
+                this.repository = LocalDatabaseRepository(database.memoDao(), fileStorage, account, folderDao = database.folderDao())
                 this.remoteRepository = null
                 httpClient = okHttpClient
             }
@@ -158,7 +159,8 @@ class AccountService @Inject constructor(
                     database.memoDao(),
                     fileStorage,
                     remote,
-                    account
+                    account,
+                    folderDao = database.folderDao()
                 ) { user ->
                     updateAccountFromSyncedUser(account.accountKey(), user)
                 }
@@ -172,7 +174,8 @@ class AccountService @Inject constructor(
                     database.memoDao(),
                     fileStorage,
                     remote,
-                    account
+                    account,
+                    folderDao = database.folderDao()
                 ) { user ->
                     updateAccountFromSyncedUser(account.accountKey(), user)
                 }

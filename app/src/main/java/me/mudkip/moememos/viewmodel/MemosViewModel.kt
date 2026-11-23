@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.mudkip.moememos.data.constant.MemosVersionSupport
 import me.mudkip.moememos.data.constant.MoeMemosException
+import me.mudkip.moememos.data.local.entity.FolderEntity
 import me.mudkip.moememos.data.local.entity.MemoEntity
 import me.mudkip.moememos.data.local.entity.ResourceEntity
 import me.mudkip.moememos.data.model.DailyUsageStat
@@ -51,6 +52,8 @@ class MemosViewModel @Inject constructor(
 ) : ViewModel() {
 
     var memos = mutableStateListOf<MemoEntity>()
+        private set
+    var folders = mutableStateListOf<FolderEntity>()
         private set
     var tags = mutableStateListOf<String>()
         private set
@@ -107,6 +110,40 @@ class MemosViewModel @Inject constructor(
                         applyMemos(latestMemos)
                     }
                 }
+
+            viewModelScope.launch {
+                memoService.folders.collectLatest { latestFolders ->
+                    folders.clear()
+                    folders.addAll(latestFolders)
+                }
+            }
+        }
+    }
+
+    suspend fun createFolder(title: String, parent: String? = null): ApiResponse<FolderEntity> = withContext(viewModelScope.coroutineContext) {
+        val res = memoService.getRepository().createFolder(title, parent)
+        if (res is ApiResponse.Success) {
+            refreshFolders()
+        }
+        res
+    }
+
+    suspend fun deleteFolder(name: String): ApiResponse<Unit> = withContext(viewModelScope.coroutineContext) {
+        val res = memoService.getRepository().deleteFolder(name)
+        if (res is ApiResponse.Success) {
+            refreshFolders()
+            refreshLocalSnapshot()
+        }
+        res
+    }
+
+    suspend fun refreshFolders() = withContext(viewModelScope.coroutineContext) {
+        when (val res = memoService.getRepository().listFolders()) {
+            is ApiResponse.Success -> {
+                folders.clear()
+                folders.addAll(res.data)
+            }
+            else -> Unit
         }
     }
 
@@ -119,6 +156,7 @@ class MemosViewModel @Inject constructor(
                 errorMessage = response.getErrorMessage()
             }
         }
+        refreshFolders()
     }
 
     suspend fun refreshLocalSnapshot() = withContext(viewModelScope.coroutineContext) {

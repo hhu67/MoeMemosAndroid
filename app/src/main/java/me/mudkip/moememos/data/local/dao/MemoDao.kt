@@ -111,6 +111,9 @@ interface MemoDao {
     @Query("SELECT * FROM resources WHERE remoteId = :remoteId AND accountKey = :accountKey")
     suspend fun getResourceByRemoteId(remoteId: String, accountKey: String): ResourceEntity?
 
+    @Query("UPDATE memos SET folder = NULL WHERE (folder = :folderName OR folder LIKE :folderName || '/%') AND accountKey = :accountKey")
+    suspend fun clearFolderFromMemos(folderName: String, accountKey: String)
+
     @Query("DELETE FROM resources WHERE accountKey = :accountKey")
     suspend fun deleteResourcesByAccount(accountKey: String)
 

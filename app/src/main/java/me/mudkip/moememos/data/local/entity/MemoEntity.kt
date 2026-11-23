@@ -33,6 +33,8 @@ data class MemoEntity(
     val lastSyncedAt: Instant? = null,
     @Embedded(prefix = "location_")
     override val location: MemoLocation? = null,
+    override val folder: String? = null,
+    override val title: String? = null,
 ) : MemoRepresentable {
     @Ignore
     override var resources: List<ResourceEntity> = emptyList()

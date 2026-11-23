@@ -45,6 +45,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.skydoves.sandwich.suspendOnSuccess
 import kotlinx.coroutines.launch
@@ -146,6 +148,18 @@ fun MemosCard(
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 MemosCardActionButton(memo)
+            }
+
+            if (!memo.title.isNullOrBlank()) {
+                Text(
+                    text = memo.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(start = 15.dp, end = 15.dp, top = 2.dp, bottom = 4.dp),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
 
             MemoContent(

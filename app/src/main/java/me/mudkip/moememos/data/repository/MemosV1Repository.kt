@@ -54,7 +54,9 @@ class MemosV1Repository(
             tags = emptyList(),
             archived = memo.state == MemosV1State.ARCHIVED,
             updatedAt = memo.updateTime,
-            location = memo.location
+            location = memo.location,
+            folder = memo.folder,
+            title = memo.title
         )
     }
 
@@ -133,7 +135,9 @@ class MemosV1Repository(
         resourceRemoteIds: List<String>,
         tags: List<String>?,
         createdAt: Instant?,
-        location: MemoLocation?
+        location: MemoLocation?,
+        folder: String?,
+        title: String?,
     ): ApiResponse<Memo> {
         val resp = memosApi.createMemo(
             MemosV1CreateMemoRequest(
@@ -141,7 +145,9 @@ class MemosV1Repository(
                 visibility = MemosVisibility.fromMemoVisibility(visibility),
                 attachments = resourceRemoteIds.map { MemosV1Resource(name = getName(it)) },
                 createTime = createdAt,
-                location = location
+                location = location,
+                folder = folder,
+                title = title
             )
         )
             .mapSuccess { convertMemo(this) }
@@ -156,7 +162,9 @@ class MemosV1Repository(
         tags: List<String>?,
         pinned: Boolean?,
         archived: Boolean?,
-        location: MemoLocationChange?
+        location: MemoLocationChange?,
+        folder: String?,
+        title: String?,
     ): ApiResponse<Memo> {
         val request = UpdateMemoRequest(
             content = content,
@@ -165,17 +173,63 @@ class MemosV1Repository(
             state = archived?.let { isArchived -> if (isArchived) MemosV1State.ARCHIVED else MemosV1State.NORMAL },
             updateTime = Instant.now(),
             attachments = resourceRemoteIds?.map { MemosV1Resource(name = getName(it)) },
-            location = location?.value
+            location = location?.value,
+            folder = folder,
+            title = title
         )
         val resp = memosApi.updateMemo(
             getId(remoteId), request,
-            updateMask = if (location != null) request.updateMask(includeLocation = true) else null
+            updateMask = request.updateMask(includeLocation = location != null, includeFolder = folder != null)
         ).mapSuccess { convertMemo(this) }
         return resp
     }
 
     override suspend fun deleteMemo(remoteId: String): ApiResponse<Unit> {
         return memosApi.deleteMemo(getId(remoteId))
+    }
+
+    private fun getFolderId(name: String): String {
+        return name.removePrefix("folders/")
+    }
+
+    private fun convertFolder(folder: me.mudkip.moememos.data.api.MemosFolder): me.mudkip.moememos.data.model.Folder {
+        return me.mudkip.moememos.data.model.Folder(
+            name = folder.name,
+            title = folder.title,
+            parent = folder.parent,
+            createTime = folder.createTime,
+            updateTime = folder.updateTime
+        )
+    }
+
+    override suspend fun listFolders(): ApiResponse<List<me.mudkip.moememos.data.model.Folder>> {
+        val resp = memosApi.listFolders()
+        if (resp !is ApiResponse.Success) {
+            return ApiResponse.Success(emptyList())
+        }
+        return resp.mapSuccess { this.folders.map { convertFolder(it) } }
+    }
+
+    override suspend fun createFolder(title: String, parent: String?): ApiResponse<me.mudkip.moememos.data.model.Folder> {
+        return memosApi.createFolder(
+            body = me.mudkip.moememos.data.api.CreateFolderRequest(title = title, parent = parent)
+        ).mapSuccess { convertFolder(this) }
+    }
+
+    override suspend fun updateFolder(name: String, title: String?, parent: String?): ApiResponse<me.mudkip.moememos.data.model.Folder> {
+        val mask = buildList {
+            if (title != null) add("title")
+            if (parent != null) add("parent")
+        }.joinToString(",")
+        return memosApi.updateFolder(
+            folderId = getFolderId(name),
+            updateMask = mask,
+            body = me.mudkip.moememos.data.api.UpdateFolderRequest(name = name, title = title, parent = parent)
+        ).mapSuccess { convertFolder(this) }
+    }
+
+    override suspend fun deleteFolder(name: String): ApiResponse<Unit> {
+        return memosApi.deleteFolder(getFolderId(name))
     }
 
     override suspend fun listResources(): ApiResponse<List<Resource>> {

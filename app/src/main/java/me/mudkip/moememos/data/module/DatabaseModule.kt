@@ -8,6 +8,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import me.mudkip.moememos.data.local.FileStorage
 import me.mudkip.moememos.data.local.MoeMemosDatabase
+import me.mudkip.moememos.data.local.dao.FolderDao
 import me.mudkip.moememos.data.local.dao.MemoDao
 import me.mudkip.moememos.data.repository.LocalDatabaseRepository
 import javax.inject.Singleton
@@ -28,8 +29,13 @@ object DatabaseModule {
 
     @Singleton
     @Provides
+    fun provideFolderDao(database: MoeMemosDatabase) = database.folderDao()
+
+    @Singleton
+    @Provides
     fun provideLocalDatabaseRepository(
         memoDao: MemoDao,
-        fileStorage: FileStorage
-    ) = LocalDatabaseRepository(memoDao, fileStorage)
+        fileStorage: FileStorage,
+        folderDao: FolderDao
+    ) = LocalDatabaseRepository(memoDao, fileStorage, folderDao = folderDao)
 } 

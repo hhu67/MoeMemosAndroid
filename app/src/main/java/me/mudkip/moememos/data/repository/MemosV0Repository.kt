@@ -70,7 +70,9 @@ class MemosV0Repository (
         resourceRemoteIds: List<String>,
         tags: List<String>?,
         createdAt: Instant?,
-        location: MemoLocation?
+        location: MemoLocation?,
+        folder: String?,
+        title: String?,
     ): ApiResponse<Memo> {
         val result = memosApi.createMemo(
             MemosV0CreateMemoInput(
@@ -96,7 +98,9 @@ class MemosV0Repository (
         tags: List<String>?,
         pinned: Boolean?,
         archived: Boolean?,
-        location: MemoLocationChange?
+        location: MemoLocationChange?,
+        folder: String?,
+        title: String?,
     ): ApiResponse<Memo> {
         var touched = false
         var result: ApiResponse<Memo> = ApiResponse.exception(MoeMemosException.invalidParameter)

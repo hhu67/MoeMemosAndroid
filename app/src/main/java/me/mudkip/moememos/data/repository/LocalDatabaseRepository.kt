@@ -7,7 +7,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import me.mudkip.moememos.R
 import me.mudkip.moememos.data.local.FileStorage
+import me.mudkip.moememos.data.local.dao.FolderDao
 import me.mudkip.moememos.data.local.dao.MemoDao
+import me.mudkip.moememos.data.local.entity.FolderEntity
 import me.mudkip.moememos.data.local.entity.MemoEntity
 import me.mudkip.moememos.data.local.entity.MemoWithResources
 import me.mudkip.moememos.data.local.entity.ResourceEntity
@@ -26,6 +28,7 @@ class LocalDatabaseRepository(
     private val memoDao: MemoDao,
     private val fileStorage: FileStorage,
     private val account: Account.Local = Account.Local(),
+    private val folderDao: FolderDao? = null,
 ) : AbstractMemoRepository() {
     private val accountKey = account.accountKey()
 
@@ -63,7 +66,9 @@ class LocalDatabaseRepository(
         resources: List<ResourceEntity>,
         tags: List<String>?,
         deferPush: Boolean,
-        location: MemoLocation?
+        location: MemoLocation?,
+        folder: String?,
+        title: String?,
     ): ApiResponse<MemoEntity> {
         return try {
             val now = Instant.now()
@@ -79,7 +84,9 @@ class LocalDatabaseRepository(
                 needsSync = false,
                 isDeleted = false,
                 lastModified = now,
-                lastSyncedAt = now
+                lastSyncedAt = now,
+                folder = folder,
+                title = title
             )
             memoDao.insertMemo(memo)
 
@@ -106,7 +113,9 @@ class LocalDatabaseRepository(
         tags: List<String>?,
         pinned: Boolean?,
         deferPush: Boolean,
-        location: MemoLocationChange?
+        location: MemoLocationChange?,
+        folder: String?,
+        title: String?,
     ): ApiResponse<MemoEntity> {
         return try {
             val existingMemo = memoDao.getMemoById(identifier, accountKey)
@@ -121,7 +130,9 @@ class LocalDatabaseRepository(
                 lastModified = updatedAt,
                 lastSyncedAt = updatedAt,
                 needsSync = false,
-                isDeleted = false
+                isDeleted = false,
+                folder = folder ?: existingMemo.folder,
+                title = title ?: existingMemo.title
             )
             memoDao.insertMemo(updatedMemo)
 
@@ -262,6 +273,48 @@ class LocalDatabaseRepository(
                 ?: return ApiResponse.Failure.Exception(Exception(R.string.resource_not_found.string))
             deleteLocalFile(resource)
             memoDao.deleteResource(resource)
+            ApiResponse.Success(Unit)
+        } catch (e: Exception) {
+            ApiResponse.Failure.Exception(e)
+        }
+    }
+
+    override fun observeFolders(): Flow<List<FolderEntity>> {
+        return folderDao?.observeFolders(accountKey) ?: kotlinx.coroutines.flow.emptyFlow()
+    }
+
+    override suspend fun listFolders(): ApiResponse<List<FolderEntity>> {
+        return try {
+            val list = folderDao?.getFolders(accountKey) ?: emptyList()
+            ApiResponse.Success(list)
+        } catch (e: Exception) {
+            ApiResponse.Failure.Exception(e)
+        }
+    }
+
+    override suspend fun createFolder(title: String, parent: String?): ApiResponse<FolderEntity> {
+        return try {
+            val now = Instant.now()
+            val uid = UUID.randomUUID().toString().take(8)
+            val entity = FolderEntity(
+                name = "folders/$uid",
+                accountKey = accountKey,
+                title = title,
+                parent = parent,
+                createTime = now,
+                updateTime = now
+            )
+            folderDao?.insertFolder(entity)
+            ApiResponse.Success(entity)
+        } catch (e: Exception) {
+            ApiResponse.Failure.Exception(e)
+        }
+    }
+
+    override suspend fun deleteFolder(name: String): ApiResponse<Unit> {
+        return try {
+            folderDao?.deleteFolderAndChildren(name, accountKey)
+            memoDao.clearFolderFromMemos(name, accountKey)
             ApiResponse.Success(Unit)
         } catch (e: Exception) {
             ApiResponse.Failure.Exception(e)

@@ -33,6 +33,10 @@ class MemoService @Inject constructor(
         accountService.getRepository().observeMemos()
     }
 
+    val folders: Flow<List<me.mudkip.moememos.data.local.entity.FolderEntity>> = accountService.currentAccount.flatMapLatest {
+        accountService.getRepository().observeFolders()
+    }
+
     suspend fun sync(force: Boolean): ApiResponse<Unit> {
         return syncMutex.withLock {
             val now = System.currentTimeMillis()

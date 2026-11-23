@@ -49,6 +49,8 @@ class MemoInputViewModel @Inject constructor(
     // Identifier of the memo row that autosave writes to; null until the first autosave creates it.
     @Volatile
     var autosaveIdentifier: String? = null
+    var targetFolder: String? = null
+    var memoTitle: String? = null
     private val autosaveMutex = Mutex()
 
     suspend fun autosave(content: String, visibility: MemoVisibility, tags: List<String>, clearDraftOnCreate: Boolean = false, location: MemoLocation? = null): ApiResponse<MemoEntity> = autosaveMutex.withLock {
@@ -56,7 +58,7 @@ class MemoInputViewModel @Inject constructor(
             val repository = memoService.getRepository()
             val identifier = autosaveIdentifier
             if (identifier == null) {
-                repository.createMemo(content, visibility, uploadResources, tags, deferPush = true, location = location).also { response ->
+                repository.createMemo(content, visibility, uploadResources, tags, deferPush = true, location = location, folder = targetFolder, title = memoTitle).also { response ->
                     response.suspendOnSuccess {
                         autosaveIdentifier = data.identifier
                         if (clearDraftOnCreate) {
@@ -65,7 +67,7 @@ class MemoInputViewModel @Inject constructor(
                     }
                 }
             } else {
-                repository.updateMemo(identifier, content, null, visibility, tags, deferPush = true, location = MemoLocationChange(location))
+                repository.updateMemo(identifier, content, null, visibility, tags, deferPush = true, location = MemoLocationChange(location), folder = targetFolder, title = memoTitle)
             }
         }
     }
@@ -100,7 +102,15 @@ class MemoInputViewModel @Inject constructor(
     suspend fun loadMemo(identifier: String): MemoEntity? = memoService.getRepository().getMemo(identifier)
 
     suspend fun createMemo(content: String, visibility: MemoVisibility, tags: List<String>, location: MemoLocation? = null): ApiResponse<MemoEntity> = withContext(viewModelScope.coroutineContext) {
-        val response = memoService.getRepository().createMemo(content, visibility, uploadResources, tags, location = location)
+        val response = memoService.getRepository().createMemo(
+            content = content,
+            visibility = visibility,
+            resources = uploadResources,
+            tags = tags,
+            location = location,
+            folder = targetFolder,
+            title = memoTitle
+        )
         // Update widgets when a new memo is created
         response.suspendOnSuccess {
             WidgetUpdater.updateWidgets(getApplication())
@@ -109,7 +119,16 @@ class MemoInputViewModel @Inject constructor(
     }
 
     suspend fun editMemo(identifier: String, content: String, visibility: MemoVisibility, tags: List<String>, location: MemoLocation? = null): ApiResponse<MemoEntity> = withContext(viewModelScope.coroutineContext) {
-        val response = memoService.getRepository().updateMemo(identifier, content, uploadResources, visibility, tags, location = MemoLocationChange(location))
+        val response = memoService.getRepository().updateMemo(
+            identifier = identifier,
+            content = content,
+            resources = uploadResources,
+            visibility = visibility,
+            tags = tags,
+            location = MemoLocationChange(location),
+            folder = targetFolder,
+            title = memoTitle
+        )
         // Update widgets when a memo is edited
         response.suspendOnSuccess {
             WidgetUpdater.updateWidgets(getApplication())

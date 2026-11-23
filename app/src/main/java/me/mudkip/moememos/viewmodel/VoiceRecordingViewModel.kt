@@ -56,6 +56,7 @@ class VoiceRecordingViewModel @Inject constructor(
 ) : ViewModel() {
 
     val resumeMemoId: String? = savedStateHandle.get<String>("resumeMemoId")
+    var targetFolder: String? = savedStateHandle.get<String>("folder")
 
     var phase by mutableStateOf(RecorderPhase.IDLE)
         private set
@@ -287,7 +288,8 @@ class VoiceRecordingViewModel @Inject constructor(
                 val memo = repository.createMemo(
                     content = fullTranscript ?: VoiceMemoFormat.placeholder(),
                     visibility = visibility,
-                    resources = listOf(resource.data)
+                    resources = listOf(resource.data),
+                    folder = targetFolder
                 )
                 if (memo is ApiResponse.Success) {
                     file.delete()

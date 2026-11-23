@@ -28,6 +28,7 @@ import me.mudkip.moememos.ui.page.account.AccountPage
 import me.mudkip.moememos.ui.page.account.AddAccountPage
 import me.mudkip.moememos.ui.page.login.LoginPage
 import me.mudkip.moememos.ui.page.memoinput.MemoInputPage
+import me.mudkip.moememos.ui.page.memos.FolderPage
 import me.mudkip.moememos.ui.page.memos.MemoDetailPage
 import me.mudkip.moememos.ui.page.memos.MemosPage
 import me.mudkip.moememos.ui.page.memos.SearchPage
@@ -87,8 +88,18 @@ fun Navigation() {
                     LoginPage(navController = navController)
                 }
 
-                composable(RouteName.INPUT) {
-                    MemoInputPage()
+                composable(
+                    route = "${RouteName.INPUT}?folder={folder}",
+                    arguments = listOf(
+                        navArgument("folder") {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        }
+                    )
+                ) { entry ->
+                    val folder = entry.arguments?.getString("folder")?.let(Uri::decode)
+                    MemoInputPage(folder = folder)
                 }
 
                 composable(RouteName.SHARE) {
@@ -120,6 +131,11 @@ fun Navigation() {
                     TagMemoPage(tag = tag, navController = navController)
                 }
 
+                composable("${RouteName.FOLDER}/{folderName}") { entry ->
+                    val folderName = entry.arguments?.getString("folderName")?.let(Uri::decode) ?: ""
+                    FolderPage(folderName = folderName, navController = navController)
+                }
+
                 composable("${RouteName.MEMO_DETAIL}?memoId={memoId}") { entry ->
                     val memoId = entry.arguments?.getString("memoId")
                     if (memoId != null) {
@@ -128,9 +144,14 @@ fun Navigation() {
                 }
 
                 composable(
-                    route = "${RouteName.VOICE_RECORDING}?resumeMemoId={resumeMemoId}",
+                    route = "${RouteName.VOICE_RECORDING}?resumeMemoId={resumeMemoId}&folder={folder}",
                     arguments = listOf(
                         navArgument("resumeMemoId") {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
+                        navArgument("folder") {
                             type = NavType.StringType
                             nullable = true
                             defaultValue = null
@@ -144,7 +165,7 @@ fun Navigation() {
                             } else {
                                 // Replace the recorder with the saved memo's player.
                                 navController.navigate("${RouteName.MEMO_DETAIL}?memoId=${Uri.encode(savedMemoId)}") {
-                                    popUpTo("${RouteName.VOICE_RECORDING}?resumeMemoId={resumeMemoId}") { inclusive = true }
+                                    popUpTo("${RouteName.VOICE_RECORDING}?resumeMemoId={resumeMemoId}&folder={folder}") { inclusive = true }
                                 }
                             }
                         }

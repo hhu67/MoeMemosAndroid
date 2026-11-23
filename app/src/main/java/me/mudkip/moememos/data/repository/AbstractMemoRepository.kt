@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import me.mudkip.moememos.data.local.entity.FolderEntity
 import me.mudkip.moememos.data.local.entity.MemoEntity
 import me.mudkip.moememos.data.local.entity.ResourceEntity
 import me.mudkip.moememos.data.model.MemoLocation
@@ -23,12 +24,37 @@ abstract class AbstractMemoRepository {
     abstract suspend fun listMemos(): ApiResponse<List<MemoEntity>>
     abstract suspend fun listArchivedMemos(): ApiResponse<List<MemoEntity>>
     abstract suspend fun getMemo(identifier: String): MemoEntity?
-    abstract suspend fun createMemo(content: String, visibility: MemoVisibility, resources: List<ResourceEntity>, tags: List<String>? = null, deferPush: Boolean = false, location: MemoLocation? = null): ApiResponse<MemoEntity>
-    abstract suspend fun updateMemo(identifier: String, content: String? = null, resources: List<ResourceEntity>? = null, visibility: MemoVisibility? = null, tags: List<String>? = null, pinned: Boolean? = null, deferPush: Boolean = false, location: MemoLocationChange? = null): ApiResponse<MemoEntity>
+    abstract suspend fun createMemo(
+        content: String,
+        visibility: MemoVisibility,
+        resources: List<ResourceEntity>,
+        tags: List<String>? = null,
+        deferPush: Boolean = false,
+        location: MemoLocation? = null,
+        folder: String? = null,
+        title: String? = null,
+    ): ApiResponse<MemoEntity>
+    abstract suspend fun updateMemo(
+        identifier: String,
+        content: String? = null,
+        resources: List<ResourceEntity>? = null,
+        visibility: MemoVisibility? = null,
+        tags: List<String>? = null,
+        pinned: Boolean? = null,
+        deferPush: Boolean = false,
+        location: MemoLocationChange? = null,
+        folder: String? = null,
+        title: String? = null,
+    ): ApiResponse<MemoEntity>
     open suspend fun flushPendingPush(identifier: String) = Unit
     abstract suspend fun deleteMemo(identifier: String): ApiResponse<Unit>
     abstract suspend fun archiveMemo(identifier: String): ApiResponse<Unit>
     abstract suspend fun restoreMemo(identifier: String): ApiResponse<Unit>
+
+    open suspend fun listFolders(): ApiResponse<List<FolderEntity>> = ApiResponse.Success(emptyList())
+    open suspend fun createFolder(title: String, parent: String? = null): ApiResponse<FolderEntity> = ApiResponse.Failure.Exception(UnsupportedOperationException())
+    open suspend fun deleteFolder(name: String): ApiResponse<Unit> = ApiResponse.Success(Unit)
+    open fun observeFolders(): Flow<List<FolderEntity>> = emptyFlow()
 
     abstract suspend fun listTags(): ApiResponse<List<String>>
 

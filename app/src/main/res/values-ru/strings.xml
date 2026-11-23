@@ -174,4 +174,16 @@
     <string name="location_unavailable">Не удалось определить текущее местоположение. Повторите попытку или введите координаты вручную.</string>
     <string name="location_settings">Настройки местоположения</string>
     <string name="location_no_map_app">Нет доступного приложения карт или браузера.</string>
+
+    <!-- Папки -->
+    <string name="new_folder">Новая папка</string>
+    <string name="new_subfolder">Новая подпапка</string>
+    <string name="folder_name">Название папки</string>
+    <string name="delete_folder">Удалить папку</string>
+    <string name="delete_folder_confirm">Удалить папку «%1$s»? Заметки внутри не удалятся, а останутся без папки.</string>
+    <string name="empty_folder">В этой папке пока нет заметок</string>
+    <string name="folders">Папки</string>
+    <string name="create">Создать</string>
+    <string name="title">Заголовок</string>
+    <string name="title_optional">Заголовок (необязательно)</string>
 </resources>

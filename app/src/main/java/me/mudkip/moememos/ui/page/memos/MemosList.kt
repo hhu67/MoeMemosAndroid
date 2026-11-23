@@ -47,6 +47,12 @@ import me.mudkip.moememos.util.hasCustomTag
 import me.mudkip.moememos.util.memoMatchesSearch
 import me.mudkip.moememos.viewmodel.LocalMemos
 import me.mudkip.moememos.viewmodel.LocalUserState
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.text.font.FontWeight
+import me.mudkip.moememos.data.local.entity.FolderEntity
+import me.mudkip.moememos.ui.component.FolderCard
+import me.mudkip.moememos.ui.page.memos.PullRefreshSyncAlert
 import me.mudkip.moememos.viewmodel.ManualSyncResult
 import timber.log.Timber
 
@@ -57,10 +63,12 @@ fun MemosList(
     lazyListState: LazyListState = rememberLazyListState(),
     tag: String? = null,
     searchString: String? = null,
+    folderName: String? = null,
     additionalBottomPadding: Dp = 16.dp,
     onRefresh: (suspend () -> Unit)? = null,
     onTagClick: ((String) -> Unit)? = null,
     onMemoClick: ((String) -> Unit)? = null,
+    onFolderClick: ((FolderEntity) -> Unit)? = null,
     archivedResults: List<MemoEntity> = emptyList(),
 ) {
     val context = LocalContext.current
@@ -77,23 +85,30 @@ fun MemosList(
     val scope = rememberCoroutineScope()
     var isRefreshing by remember { mutableStateOf(false) }
     var syncAlert by remember { mutableStateOf<PullRefreshSyncAlert?>(null) }
-    val filteredMemos = remember(viewModel.memos.toList(), tag, searchString) {
+
+    val foldersToShow = remember(viewModel.folders.toList(), folderName, tag, searchString) {
+        if (tag != null || !searchString.isNullOrEmpty()) {
+            emptyList()
+        } else if (folderName == null) {
+            viewModel.folders.filter { it.parent.isNullOrEmpty() }
+        } else {
+            viewModel.folders.filter { it.parent == folderName }
+        }
+    }
+
+    val filteredMemos = remember(viewModel.memos.toList(), tag, searchString, folderName) {
         val pinned = viewModel.memos.filter { it.pinned }
         val nonPinned = viewModel.memos.filter { !it.pinned }
         var fullList = pinned + nonPinned
 
-        tag?.let { tag ->
-            fullList = fullList.filter { memo ->
-                hasCustomTag(memo.content, tag)
-            }
-        }
-
-        searchString?.let { searchString ->
-            if (searchString.isNotEmpty()) {
-                fullList = fullList.filter { memo ->
-                    memoMatchesSearch(memo.content, searchString)
-                }
-            }
+        if (tag != null) {
+            fullList = fullList.filter { memo -> hasCustomTag(memo.content, tag) }
+        } else if (!searchString.isNullOrEmpty()) {
+            fullList = fullList.filter { memo -> memoMatchesSearch(memo.content, searchString) }
+        } else if (folderName == null) {
+            fullList = fullList.filter { memo -> memo.folder.isNullOrEmpty() }
+        } else {
+            fullList = fullList.filter { memo -> memo.folder == folderName }
         }
 
         fullList
@@ -140,9 +155,43 @@ fun MemosList(
             state = lazyListState,
             contentPadding = listContentPadding
         ) {
-            if (filteredMemos.isEmpty() && archivedResults.isEmpty()) {
+            if (foldersToShow.isNotEmpty()) {
+                item(key = "folders-header") {
+                    Text(
+                        stringResource(R.string.folders),
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                items(foldersToShow, key = { "folder-${it.name}" }) { folder ->
+                    val count = viewModel.memos.count { it.folder == folder.name }
+                    FolderCard(
+                        folder = folder,
+                        memoCount = count,
+                        onClick = {
+                            if (onFolderClick != null) {
+                                onFolderClick(folder)
+                            } else {
+                                navController.navigate("${RouteName.FOLDER}/${Uri.encode(folder.name)}")
+                            }
+                        }
+                    )
+                }
+                item(key = "memos-divider") {
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+            }
+
+            if (filteredMemos.isEmpty() && foldersToShow.isEmpty() && archivedResults.isEmpty()) {
                 item(key = "empty") {
-                    Text(stringResource(R.string.no_memos), modifier = Modifier.padding(24.dp))
+                    val emptyText = if (folderName != null) {
+                        stringResource(R.string.empty_folder)
+                    } else {
+                        stringResource(R.string.no_memos)
+                    }
+                    Text(emptyText, modifier = Modifier.padding(24.dp))
                 }
             }
             items(filteredMemos, key = { it.identifier }) { memo ->

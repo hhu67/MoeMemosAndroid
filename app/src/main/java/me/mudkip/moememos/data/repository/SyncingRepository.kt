@@ -22,7 +22,9 @@ import kotlinx.coroutines.sync.withLock
 import me.mudkip.moememos.R
 import me.mudkip.moememos.data.constant.MoeMemosException
 import me.mudkip.moememos.data.local.FileStorage
+import me.mudkip.moememos.data.local.dao.FolderDao
 import me.mudkip.moememos.data.local.dao.MemoDao
+import me.mudkip.moememos.data.local.entity.FolderEntity
 import me.mudkip.moememos.data.local.entity.MemoEntity
 import me.mudkip.moememos.data.local.entity.MemoWithResources
 import me.mudkip.moememos.data.local.entity.ResourceEntity
@@ -49,6 +51,7 @@ class SyncingRepository(
     private val remoteRepository: RemoteRepository,
     private val account: Account,
     deferredPushDelayMillis: Long = 2000,
+    private val folderDao: FolderDao? = null,
     private val onUserSynced: suspend (User) -> Unit = {},
 ) : AbstractMemoRepository() {
     private data class UploadedResourcesResult(
@@ -111,7 +114,9 @@ class SyncingRepository(
         resources: List<ResourceEntity>,
         tags: List<String>?,
         deferPush: Boolean,
-        location: MemoLocation?
+        location: MemoLocation?,
+        folder: String?,
+        title: String?,
     ): ApiResponse<MemoEntity> {
         return try {
             val now = Instant.now()
@@ -128,7 +133,9 @@ class SyncingRepository(
                 needsSync = true,
                 isDeleted = false,
                 lastModified = now,
-                lastSyncedAt = null
+                lastSyncedAt = null,
+                folder = folder,
+                title = title
             )
             memoDao.insertMemo(localMemo)
 
@@ -156,7 +163,9 @@ class SyncingRepository(
         tags: List<String>?,
         pinned: Boolean?,
         deferPush: Boolean,
-        location: MemoLocationChange?
+        location: MemoLocationChange?,
+        folder: String?,
+        title: String?,
     ): ApiResponse<MemoEntity> {
         return try {
             var updatedMemo: MemoEntity
@@ -173,7 +182,9 @@ class SyncingRepository(
                     pinned = pinned ?: existingMemo.pinned,
                     needsSync = true,
                     isDeleted = false,
-                    lastModified = nextLastModified(existingMemo)
+                    lastModified = nextLastModified(existingMemo),
+                    folder = folder ?: existingMemo.folder,
+                    title = title ?: existingMemo.title
                 )
             } while (!memoDao.insertMemoIfUnchanged(updatedMemo, existingMemo.lastModified))
 
@@ -454,6 +465,22 @@ class SyncingRepository(
             return remoteArchived.mapFailureToUnit()
         }
 
+        val remoteFolders = remoteRepository.listFolders()
+        if (remoteFolders is ApiResponse.Success) {
+            val entities = remoteFolders.data.map { folder ->
+                FolderEntity(
+                    name = folder.name,
+                    accountKey = accountKey,
+                    title = folder.title,
+                    parent = folder.parent,
+                    createTime = folder.createTime,
+                    updateTime = folder.updateTime
+                )
+            }
+            folderDao?.clearFolders(accountKey)
+            folderDao?.insertFolders(entities)
+        }
+
         val remoteMemos = remoteNormal.data + remoteArchived.data
         val remoteById = remoteMemos.associateBy { remoteMemoId(it) }
 
@@ -633,7 +660,9 @@ class SyncingRepository(
                 visibility = local.visibility,
                 pinned = local.pinned,
                 archived = local.archived,
-                location = MemoLocationChange(local.location)
+                location = MemoLocationChange(local.location),
+                folder = local.folder,
+                title = local.title
             )
             if (updated is ApiResponse.Success) {
                 reconcileServerCreatedMemo(
@@ -651,7 +680,9 @@ class SyncingRepository(
                 resourceRemoteIds = remoteResourceIds,
                 tags = null,
                 createdAt = local.date,
-                location = local.location
+                location = local.location,
+                folder = local.folder,
+                title = local.title
             )
             if (created !is ApiResponse.Success) {
                 return false
@@ -669,7 +700,9 @@ class SyncingRepository(
                     visibility = local.visibility,
                     pinned = local.pinned,
                     archived = local.archived,
-                    location = MemoLocationChange(local.location)
+                    location = MemoLocationChange(local.location),
+                    folder = local.folder,
+                    title = local.title
                 )
                 if (updated !is ApiResponse.Success) {
                     // Keep the server linkage and needsSync: the next push is an update and retries
@@ -823,7 +856,9 @@ class SyncingRepository(
             needsSync = false,
             isDeleted = false,
             lastModified = remoteUpdatedAt,
-            lastSyncedAt = remoteUpdatedAt
+            lastSyncedAt = remoteUpdatedAt,
+            folder = remoteMemo.folder,
+            title = remoteMemo.title
         )
         if (current != null && expectedLastModified != null) {
             if (!memoDao.insertMemoIfUnchanged(remoteEntity, expectedLastModified)) {
@@ -1048,6 +1083,61 @@ class SyncingRepository(
             is ApiResponse.Success -> ApiResponse.Success(Unit)
             is ApiResponse.Failure.Error -> ApiResponse.Failure.Error(this.payload)
             is ApiResponse.Failure.Exception -> ApiResponse.Failure.Exception(this.throwable)
+        }
+    }
+
+    override fun observeFolders(): Flow<List<FolderEntity>> {
+        return folderDao?.observeFolders(accountKey) ?: kotlinx.coroutines.flow.emptyFlow()
+    }
+
+    override suspend fun listFolders(): ApiResponse<List<FolderEntity>> {
+        return try {
+            val list = folderDao?.getFolders(accountKey) ?: emptyList()
+            ApiResponse.Success(list)
+        } catch (e: Exception) {
+            ApiResponse.Failure.Exception(e)
+        }
+    }
+
+    override suspend fun createFolder(title: String, parent: String?): ApiResponse<FolderEntity> {
+        return try {
+            val remoteRes = remoteRepository.createFolder(title, parent)
+            val now = Instant.now()
+            val folder = if (remoteRes is ApiResponse.Success) {
+                FolderEntity(
+                    name = remoteRes.data.name,
+                    accountKey = accountKey,
+                    title = remoteRes.data.title,
+                    parent = remoteRes.data.parent,
+                    createTime = remoteRes.data.createTime ?: now,
+                    updateTime = remoteRes.data.updateTime ?: now
+                )
+            } else {
+                val uid = UUID.randomUUID().toString().take(8)
+                FolderEntity(
+                    name = "folders/$uid",
+                    accountKey = accountKey,
+                    title = title,
+                    parent = parent,
+                    createTime = now,
+                    updateTime = now
+                )
+            }
+            folderDao?.insertFolder(folder)
+            ApiResponse.Success(folder)
+        } catch (e: Exception) {
+            ApiResponse.Failure.Exception(e)
+        }
+    }
+
+    override suspend fun deleteFolder(name: String): ApiResponse<Unit> {
+        return try {
+            remoteRepository.deleteFolder(name)
+            folderDao?.deleteFolderAndChildren(name, accountKey)
+            memoDao.clearFolderFromMemos(name, accountKey)
+            ApiResponse.Success(Unit)
+        } catch (e: Exception) {
+            ApiResponse.Failure.Exception(e)
         }
     }
 
