@@ -1,9 +1,7 @@
 package me.mudkip.moememos.viewmodel
 
 import android.content.Context
-import android.media.MediaRecorder
 import android.net.Uri
-import android.os.Build
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -15,11 +13,8 @@ import com.skydoves.sandwich.ApiResponse
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import me.mudkip.moememos.R
 import me.mudkip.moememos.data.local.entity.MemoEntity
@@ -30,12 +25,10 @@ import me.mudkip.moememos.data.service.MemoService
 import me.mudkip.moememos.ext.getErrorMessage
 import me.mudkip.moememos.ext.string
 import me.mudkip.moememos.service.VoiceRecordingService
-import me.mudkip.moememos.service.VoiceRecordingSession
 import me.mudkip.moememos.util.LiveTranscriber
 import me.mudkip.moememos.util.VoiceMemoFormat
 import me.mudkip.moememos.util.extractWaveform
 import me.mudkip.moememos.util.mergeAudioFiles
-import me.mudkip.moememos.util.normalizeAmplitude
 import me.mudkip.moememos.util.resolveAudioFile
 import me.mudkip.moememos.util.transcribeAudioFile
 import me.mudkip.moememos.widget.WidgetUpdater
@@ -94,14 +87,11 @@ class VoiceRecordingViewModel @Inject constructor(
         }
     }
 
-    private var recorder: MediaRecorder? = null
     private var audioFile: File? = null
     private var existingMemo: MemoEntity? = null
     private var existingAudioFile: File? = null
     private var resumeInitJob: Deferred<Unit>? = null
-    private var tickerJob: Job? = null
     private var accumulatedMs = 0L
-    private var segmentStart = 0L
 
     init {
         if (resumeMemoId != null) {
@@ -143,28 +133,16 @@ class VoiceRecordingViewModel @Inject constructor(
                 val prefix = if (resumeMemoId != null) "voice-segment" else "voice-note"
                 val file = File(dir, "$prefix-$stamp.m4a")
                 audioFile = file
-                recorder = createRecorder().apply {
-                    setAudioSource(MediaRecorder.AudioSource.MIC)
-                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                    setAudioChannels(1)
-                    setAudioSamplingRate(44_100)
-                    setAudioEncodingBitRate(96_000)
-                    setOutputFile(file.absolutePath)
-                    prepare()
-                    start()
-                }
-                segmentStart = System.currentTimeMillis()
-                phase = RecorderPhase.RECORDING
-                transcriber.start()
-                startTicker()
-                VoiceRecordingService.start(appContext)
-                VoiceRecordingSession.listener = object : VoiceRecordingSession.Listener {
-                    override fun onPauseRequested() {
-                        pause()
+
+                VoiceRecordingService.callback = object : VoiceRecordingService.Callback {
+                    override fun onPhaseChanged(phase: RecorderPhase) {
+                        this@VoiceRecordingViewModel.phase = phase
                     }
-                    override fun onResumeRequested() {
-                        resume()
+                    override fun onAmplitude(amplitude: Float) {
+                        amplitudes.add(amplitude)
+                    }
+                    override fun onElapsed(elapsedMs: Long) {
+                        this@VoiceRecordingViewModel.elapsedMs = elapsedMs
                     }
                     override fun onSaveRequested() {
                         stopAndSave()
@@ -172,43 +150,44 @@ class VoiceRecordingViewModel @Inject constructor(
                     override fun onDiscardRequested() {
                         discard()
                     }
+                    override fun onError(message: String) {
+                        errorMessage = message
+                        this@VoiceRecordingViewModel.phase = RecorderPhase.DONE
+                    }
                 }
+
+                VoiceRecordingService.startRecording(appContext, file, accumulatedMs)
+                phase = RecorderPhase.RECORDING
+                transcriber.start()
             } catch (e: Exception) {
                 Timber.e(e)
-                releaseRecorder()
                 errorMessage = R.string.recording_failed.string
+                phase = RecorderPhase.DONE
             }
         }
     }
 
     fun pause() {
         if (phase != RecorderPhase.RECORDING) return
-        runCatching { recorder?.pause() }.onFailure { Timber.e(it) }
-        accumulatedMs += System.currentTimeMillis() - segmentStart
-        elapsedMs = accumulatedMs
+        VoiceRecordingService.pause(appContext)
         phase = RecorderPhase.PAUSED
         transcriber.pause()
-        VoiceRecordingService.update(appContext, isPaused = true, elapsedMs = elapsedMs)
     }
 
     fun resume() {
         if (phase != RecorderPhase.PAUSED) return
-        runCatching { recorder?.resume() }.onFailure { Timber.e(it) }
-        segmentStart = System.currentTimeMillis()
+        VoiceRecordingService.resume(appContext)
         phase = RecorderPhase.RECORDING
         transcriber.resume()
-        VoiceRecordingService.update(appContext, isPaused = false, elapsedMs = elapsedMs)
     }
 
     /** Throws the recording away. */
     fun discard() {
-        tickerJob?.cancel()
+        VoiceRecordingService.callback = null
+        VoiceRecordingService.discard(appContext)
         transcriber.stop()
-        releaseRecorder()
         audioFile?.delete()
         audioFile = null
-        VoiceRecordingService.stop(appContext)
-        VoiceRecordingSession.listener = null
         phase = RecorderPhase.DONE
     }
 
@@ -217,20 +196,15 @@ class VoiceRecordingViewModel @Inject constructor(
      * transcript becomes the memo text. The memo is saved even when transcription fails.
      */
     fun stopAndSave() {
-        if (phase != RecorderPhase.RECORDING && phase != RecorderPhase.PAUSED) return
-        if (phase == RecorderPhase.RECORDING) {
-            accumulatedMs += System.currentTimeMillis() - segmentStart
-        }
-        elapsedMs = accumulatedMs
-        tickerJob?.cancel()
+        if (phase == RecorderPhase.SAVING || phase == RecorderPhase.DONE) return
         phase = RecorderPhase.SAVING
+        VoiceRecordingService.callback = null
+        VoiceRecordingService.instance?.stopAndReleaseRecorder()
         VoiceRecordingService.stop(appContext)
-        VoiceRecordingSession.listener = null
-        val stopped = runCatching { recorder?.stop() }.isSuccess
-        releaseRecorder()
         transcriber.stop()
-        val file = audioFile
-        if (!stopped || file == null || !file.exists() || file.length() == 0L) {
+
+        val file = audioFile ?: VoiceRecordingService.currentAudioFile
+        if (file == null || !file.exists() || file.length() == 0L) {
             file?.delete()
             errorMessage = R.string.recording_failed.string
             phase = RecorderPhase.DONE
@@ -327,6 +301,16 @@ class VoiceRecordingViewModel @Inject constructor(
         }
     }
 
+    fun onScreenOffOrBackground() {
+        transcriber.pause()
+    }
+
+    fun onScreenOnOrForeground() {
+        if (phase == RecorderPhase.RECORDING) {
+            transcriber.resume()
+        }
+    }
+
     private fun defaultVisibility(account: Account): MemoVisibility {
         val info = when (account) {
             is Account.MemosV0 -> account.info
@@ -339,48 +323,12 @@ class VoiceRecordingViewModel @Inject constructor(
     private suspend fun transcribeOnServer(file: File): String? =
         transcribeAudioFile(file, accountService.currentAccount.first(), accountService.httpClient)
 
-    private var lastNotifUpdateMs = 0L
-
-    private fun startTicker() {
-        tickerJob?.cancel()
-        lastNotifUpdateMs = 0L
-        tickerJob = viewModelScope.launch {
-            while (isActive) {
-                delay(SAMPLE_INTERVAL_MS)
-                if (phase != RecorderPhase.RECORDING) continue
-                elapsedMs = accumulatedMs + (System.currentTimeMillis() - segmentStart)
-                // Peak amplitude since the previous call: this is what makes bars follow loudness.
-                val peak = runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0)
-                amplitudes.add(normalizeAmplitude(peak))
-
-                if (elapsedMs - lastNotifUpdateMs >= 1000L) {
-                    lastNotifUpdateMs = elapsedMs
-                    VoiceRecordingService.update(appContext, isPaused = false, elapsedMs = elapsedMs)
-                }
-            }
-        }
-    }
-
-    private fun createRecorder(): MediaRecorder =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            MediaRecorder(appContext)
-        } else {
-            @Suppress("DEPRECATION")
-            MediaRecorder()
-        }
-
-    private fun releaseRecorder() {
-        runCatching { recorder?.release() }
-        recorder = null
-    }
-
     override fun onCleared() {
-        tickerJob?.cancel()
+        VoiceRecordingService.callback = null
         transcriber.destroy()
-        VoiceRecordingService.stop(appContext)
-        VoiceRecordingSession.listener = null
         if (phase == RecorderPhase.RECORDING || phase == RecorderPhase.PAUSED) {
-            releaseRecorder()
+            VoiceRecordingService.instance?.stopAndReleaseRecorder()
+            VoiceRecordingService.stop(appContext)
             audioFile?.delete()
         }
         super.onCleared()

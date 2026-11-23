@@ -52,8 +52,10 @@ class LiveTranscriber(private val context: Context) {
                 return
             }
             commitPartial()
+            // If pause() was called, do not restart
+            if (!listening) return
             // "No match" and timeouts just mean silence; keep listening.
-            handler.postDelayed({ restart() }, if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 500 else 100)
+            handler.postDelayed({ if (listening) restart() }, if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 500 else 100)
         }
 
         override fun onReadyForSpeech(params: Bundle?) = Unit
@@ -83,7 +85,14 @@ class LiveTranscriber(private val context: Context) {
     }
 
     fun resume() {
-        if (!isAvailable || listening || recognizer == null) return
+        if (!isAvailable || listening) return
+        if (recognizer == null) {
+            recognizer = runCatching { SpeechRecognizer.createSpeechRecognizer(context) }
+                .onFailure { Timber.w(it) }
+                .getOrNull()
+                ?.also { it.setRecognitionListener(listener) }
+        }
+        if (recognizer == null) return
         listening = true
         listen()
     }

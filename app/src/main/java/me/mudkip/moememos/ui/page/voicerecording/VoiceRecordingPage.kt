@@ -63,6 +63,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import me.mudkip.moememos.R
 import me.mudkip.moememos.ext.string
 import me.mudkip.moememos.util.formatRecordingClock
@@ -118,6 +121,27 @@ fun VoiceRecordingPage(
     DisposableEffect(activity) {
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose { activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
+
+    // When screen turns off or app is backgrounded, pause LiveTranscriber so SpeechRecognizer
+    // doesn't conflict with background MediaRecorder. Resume LiveTranscriber on return.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    viewModel.onScreenOffOrBackground()
+                }
+                Lifecycle.Event.ON_START -> {
+                    viewModel.onScreenOnOrForeground()
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     LaunchedEffect(viewModel.errorMessage) {
